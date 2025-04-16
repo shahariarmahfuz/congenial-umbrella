@@ -20,7 +20,7 @@ logging.basicConfig(
 app = Flask(__name__)
 
 # === Configuration Constants ===
-VIDEO_URL = "[https://www.dropbox.com/scl/fi/qrzcox70ca91sb0kvs3e6/AQMjFm0PTBsLYCQ5zjKeCNSDa5bcmSWIGn_NYwUdErAVoCos5otAlo6NY8ZPSzF3Tq0epd8y_GX1mBMllyHtrCTY.mp4?rlkey=ftkmjlu69k1f32r2hw0x2jvk2&st=timxwsta&raw=1](https://www.dropbox.com/scl/fi/kw2rpr2vsl7hf9gaddtsg/VID_20250330_041149_786.mp4?rlkey=rb347g41y8r0ekqvu3vea2znp&st=c15wzwjp&raw=1)"
+VIDEO_URL = "https://www.dropbox.com/scl/fi/qrzcox70ca91sb0kvs3e6/AQMjFm0PTBsLYCQ5zjKeCNSDa5bcmSWIGn_NYwUdErAVoCos5otAlo6NY8ZPSzF3Tq0epd8y_GX1mBMllyHtrCTY.mp4?rlkey=ftkmjlu69k1f32r2hw0x2jvk2&st=timxwsta&raw=1](https://www.dropbox.com/scl/fi/kw2rpr2vsl7hf9gaddtsg/VID_20250330_041149_786.mp4?rlkey=rb347g41y8r0ekqvu3vea2znp&st=c15wzwjp&raw=1"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DOWNLOAD_DIR = os.path.join(BASE_DIR, 'downloads')
 STATIC_DIR = os.path.join(BASE_DIR, 'static')
