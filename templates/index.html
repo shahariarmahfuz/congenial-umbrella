@@ -1,22 +1,120 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Anime Stream</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HLS Video Streaming Test</title>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <style>
+        body { font-family: sans-serif; margin: 20px; background-color: #f4f4f4; }
+        h1 { color: #333; }
+        #videoContainer {
+            max-width: 800px;
+            margin: 20px auto;
+            background-color: #fff;
+            padding: 15px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        video {
+            width: 100%;
+            max-height: 500px; /* Adjust as needed */
+            background-color: #000;
+        }
+        .status {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .status.success { background-color: #e7f7e7; color: #1d7a1d; }
+        .status.error { background-color: #fdecea; color: #a94442; }
+        .status.info { background-color: #e8f4fd; color: #31708f; }
+    </style>
 </head>
 <body>
-    <h1>Watch Anime</h1>
-    <video id="video" controls width="100%"></video>
+    <h1>HLS মাল্টি-কোয়ালিটি ভিডিও স্ট্রিমিং টেস্ট</h1>
+
+    <div id="videoContainer">
+        {% if error %}
+            <div class="status error">
+                <strong>ত্রুটি:</strong> {{ error }}
+            </div>
+        {% elif processing %}
+             <div class="status info">
+                ভিডিও প্রসেসিং চলছে... অনুগ্রহ করে কিছুক্ষণ পর পেজটি রিফ্রেশ করুন।
+            </div>
+        {% elif hls_ready %}
+            <div class="status success">
+                ভিডিও স্ট্রিমিংয়ের জন্য প্রস্তুত। প্লেয়ার লোড হচ্ছে...
+            </div>
+            <video id="video" controls></video>
+        {% else %}
+             <div class="status info">
+                সার্ভার স্ট্যাটাস অজানা।
+            </div>
+        {% endif %}
+    </div>
+
     <script>
-        const video = document.getElementById('video');
-        const videoUrl = "{{ video_url }}";
-        if (Hls.isSupported()) {
-            const hls = new Hls();
-            hls.loadSource(videoUrl);
-            hls.attachMedia(video);
-        } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-            video.src = videoUrl;
-        }
+        document.addEventListener('DOMContentLoaded', (event) => {
+            // Only initialize player if hls_ready is true (passed from Flask)
+            {% if hls_ready %}
+                var video = document.getElementById('video');
+                // Master playlist URL served by our Flask app
+                var videoSrc = '/hls/master.m3u8';
+
+                if (Hls.isSupported()) {
+                    console.log("HLS.js is supported. Initializing player.");
+                    var hls = new Hls();
+                    hls.loadSource(videoSrc);
+                    hls.attachMedia(video);
+                    hls.on(Hls.Events.MANIFEST_PARSED, function() {
+                        console.log("Manifest parsed. Ready to play.");
+                        // You can optionally start playback automatically:
+                        // video.play();
+                    });
+                    hls.on(Hls.Events.ERROR, function (event, data) {
+                        console.error('HLS.js Error:', data);
+                        if (data.fatal) {
+                            switch(data.type) {
+                                case Hls.ErrorTypes.NETWORK_ERROR:
+                                    console.error('Fatal network error encountered, trying to recover');
+                                    hls.startLoad();
+                                    break;
+                                case Hls.ErrorTypes.MEDIA_ERROR:
+                                    console.error('Fatal media error encountered, trying to recover');
+                                    hls.recoverMediaError();
+                                    break;
+                                default:
+                                    // Cannot recover
+                                    console.error('Unrecoverable HLS.js error. Destroying HLS instance.');
+                                    hls.destroy();
+                                    break;
+                            }
+                        }
+                    });
+                } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                    // HLS is natively supported on platforms like Safari
+                    console.log("Native HLS support detected.");
+                    video.src = videoSrc;
+                    video.addEventListener('loadedmetadata', function() {
+                        console.log("Metadata loaded for native HLS.");
+                        // video.play();
+                    });
+                    video.addEventListener('error', function(e) {
+                         console.error('Native HLS player error:', e);
+                    });
+                } else {
+                    console.error("HLS is not supported by this browser.");
+                    const container = document.getElementById('videoContainer');
+                    const errorMsg = document.createElement('div');
+                    errorMsg.className = 'status error';
+                    errorMsg.textContent = ' দুঃখিত, আপনার ব্রাউজার HLS ভিডিও সমর্থন করে না।';
+                    container.appendChild(errorMsg);
+                    video.style.display = 'none'; // Hide the video element if not supported
+                }
+            {% endif %}
+        });
     </script>
+
 </body>
 </html>
