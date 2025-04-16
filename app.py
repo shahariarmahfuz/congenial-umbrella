@@ -18,7 +18,7 @@ app = Flask(__name__)
 
 # === Configuration Constants ===
 # <<<--- শুধুমাত্র এই লাইনটি পরিবর্তন করা হয়েছে --->>>
-VIDEO_URL = "https://www.dropbox.com/scl/fi/gi8jigrbw2reak0e4nu8z/Record_2025-04-06-21-11-19.mp4?rlkey=ryhqk8ik9ubmxlk47yxdafb1a&st=c7udhchd&raw=1"
+VIDEO_URL = "https://video-mxp1-1.xx.fbcdn.net/o1/v/t2/f2/m69/AQM8S3pFxa70tno6zop7jYr1U16B60EHmFPInE6TGBwoOaJnQOXYtCml3Qkpv-p01h-Mq8WY8cuwf4HDp-EFVkCJ.mp4?strext=1&_nc_cat=103&_nc_sid=5e9851&_nc_ht=video-mxp1-1.xx.fbcdn.net&_nc_ohc=PsDTzb3w2UsQ7kNvwEdobVT&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5GQUNFQk9PSy4uQzMuNzIwLmRhc2hfaDI2NC1iYXNpYy1nZW4yXzcyMHAiLCJ4cHZfYXNzZXRfaWQiOjE0MDc5NDYzMjM1NTI4NTksInZpX3VzZWNhc2VfaWQiOjEwMTIyLCJkdXJhdGlvbl9zIjoyMDAsInVybGdlbl9zb3VyY2UiOiJ3d3cifQ%3D%3D&ccb=17-1&vs=f2a9875f9f41aa3d&_nc_vs=HBksFQIYOnBhc3N0aHJvdWdoX2V2ZXJzdG9yZS9HTmhqVUIzRVlmM3FMbU1DQVBzVVd5WFBEaXNHYm1kakFBQUYVAALIAQAVAhg6cGFzc3Rocm91Z2hfZXZlcnN0b3JlL0dJTkhVaDB6TFExRGFSOEZBR2tockdVaUNUdEdickZxQUFBRhUCAsgBACgAGAAbAogHdXNlX29pbAExEnByb2dyZXNzaXZlX3JlY2lwZQExFQAAJrap08ehoYAFFQIoAkMzLBdAaRiLQ5WBBhgZZGFzaF9oMjY0LWJhc2ljLWdlbjJfNzIwcBEAdQIA&_nc_zt=28&oh=00_AfEkU99vSfDRfVji51klRkyvAj5hml5FUlj3hFYozoLfGg&oe=68056F07&dl=1"
 # <<<------------------------------------------>>>
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
