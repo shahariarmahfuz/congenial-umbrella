@@ -3,288 +3,189 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>HLS ভিডিও স্ট্রিমিং (সার্ভার ক্যাশ)</title>
+    <title>HLS ভিডিও স্ট্রিমিং (Plyr - লেবেল সহ)</title>
 
-    <link rel="stylesheet" href="[https://cdn.plyr.io/3.7.8/plyr.css](https://cdn.plyr.io/3.7.8/plyr.css)" />
+    <link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css" />
 
-    <script src="[https://cdn.jsdelivr.net/npm/hls.js@latest](https://cdn.jsdelivr.net/npm/hls.js@latest)"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
 
-    <script src="[https://cdn.plyr.io/3.7.8/plyr.js](https://cdn.plyr.io/3.7.8/plyr.js)"></script>
+    <script src="https://cdn.plyr.io/3.7.8/plyr.js"></script>
 
     <style>
-        /* Basic Styling */
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
-            margin: 20px;
-            background-color: #f8f9fa;
-            color: #212529;
-            line-height: 1.6;
-        }
-        h1 {
-            color: #0056b3; /* Darker Blue */
-            text-align: center;
-            margin-bottom: 30px;
-        }
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f8f9fa; color: #212529; }
+        h1 { color: #007bff; text-align: center; }
         .container {
-            max-width: 900px; /* Slightly wider */
+            max-width: 800px;
             margin: 30px auto;
             background-color: #ffffff;
-            padding: 25px 30px; /* More padding */
-            border-radius: 10px; /* More rounded */
-            box-shadow: 0 6px 12px rgba(0, 0, 0, 0.1); /* Softer shadow */
-            border: 1px solid #e9ecef; /* Subtle border */
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
         }
-
-        /* Player Styling */
         :root {
-          --plyr-color-main: #007bff; /* Standard Blue */
+          --plyr-color-main: #007bff;
         }
-        #player-container {
-            margin-top: 20px;
-            border-radius: 8px; /* Rounded corners for player area */
-            overflow: hidden; /* Ensures video stays within bounds */
-        }
-        #player-container.hidden {
-            display: none;
-        }
-        .plyr--video {
-             border-radius: 8px; /* Match container */
-        }
-
-
-        /* Status Box Styling */
         .status {
-            margin-bottom: 25px; /* More space below status */
-            padding: 15px 20px;
-            border-radius: 6px;
+            margin: 20px 0;
+            padding: 15px;
+            border-radius: 5px;
             font-size: 1.1em;
             text-align: center;
-            border-left: 5px solid; /* Add a colored left border */
         }
-        .status.success {
-            background-color: #e9f7ef; /* Lighter green */
-            color: #1d7b49;
-            border-color: #28a745; /* Bootstrap success green */
-        }
-        .status.error {
-            background-color: #fbebec; /* Lighter red */
-            color: #8c2f33;
-            border-color: #dc3545; /* Bootstrap danger red */
-        }
-        .status.info {
-            background-color: #e7f3fe; /* Lighter blue */
-            color: #315b88;
-            border-color: #17a2b8; /* Bootstrap info cyan */
-        }
-
-        /* Styling for <pre> tag within status box (for errors) */
-        .status pre {
-             white-space: pre-wrap;       /* Wrap long lines */
-             word-wrap: break-word;      /* Break long words */
-             text-align: left;           /* Align error text left */
-             max-height: 200px;          /* Limit height for long errors */
-             overflow-y: auto;           /* Add scrollbar if needed */
-             background-color: rgba(0, 0, 0, 0.03); /* Subtle background */
-             padding: 12px;              /* More padding */
-             margin-top: 15px;           /* Space above pre */
-             border-radius: 4px;
-             font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace; /* Monospace font */
-             font-size: 0.9em;           /* Slightly smaller font */
-             border: 1px solid rgba(0, 0, 0, 0.1); /* Subtle border */
-        }
+        .status.success { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .status.error { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .status.info { background-color: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; }
+        #player-container.hidden { display: none; }
     </style>
 </head>
 <body>
-    <h1>HLS মাল্টি-কোয়ালিটি ভিডিও স্ট্রিমিং (সার্ভার ক্যাশ)</h1>
+    <h1>HLS মাল্টি-কোয়ালিটি ভিডিও স্ট্রিমিং (Plyr - লেবেল সহ)</h1>
 
     <div class="container">
-        <div class="status {{ 'success' if hls_ready else ('error' if error else 'info') }}">
-            {{ status_detail | default('সার্ভারের অবস্থা নির্ণয় করা হচ্ছে...') }}
-             {% if error %}
-                 <pre>{{ error }}</pre>
-             {% endif %}
-        </div>
-
-        {% if hls_ready and master_playlist_stream_url %}
-            <div id="player-container">
-                 <video id="player" controls crossorigin playsinline poster="">
-                     </video>
+        {% if error %}
+            <div class="status error">
+                <strong>ত্রুটি:</strong> <pre style="white-space: pre-wrap; text-align: left;">{{ error }}</pre>
             </div>
-        {% else %}
              <div id="player-container" class="hidden">
-                 <video id="player" controls crossorigin playsinline poster=""></video>
+                 <video id="player" controls crossorigin playsinline></video>
+             </div>
+
+        {% elif processing %}
+             <div class="status info">
+                ⏳ ভিডিও প্রসেসিং চলছে... অনুগ্রহ করে কিছুক্ষণ পর পেজটি রিফ্রেশ করুন।
+             </div>
+             <div id="player-container" class="hidden">
+                 <video id="player" controls crossorigin playsinline></video>
+             </div>
+
+        {% elif hls_ready %}
+            <div class="status success">
+                ✅ ভিডিও স্ট্রিমিংয়ের জন্য প্রস্তুত। প্লেয়ার লোড হচ্ছে...
+            </div>
+            <div id="player-container">
+                 <video id="player" controls crossorigin playsinline></video>
+            </div>
+
+        {% else %}
+             <div class="status info">
+                🤔 সার্ভারের অবস্থা অজানা বা প্রসেসিং শুরু হয়নি।
+             </div>
+             <div id="player-container" class="hidden">
+                 <video id="player" controls crossorigin playsinline></video>
              </div>
         {% endif %}
-
     </div>
 
     <script>
       document.addEventListener('DOMContentLoaded', () => {
-        // Get variables passed from Flask template
-        const hlsReady = {{ hls_ready | tojson }}; // Convert Python boolean to JS boolean
-        // This URL points to the Flask server's caching route, e.g., /stream/master.m3u8
-        const masterPlaylistStreamUrl = {{ master_playlist_stream_url | tojson }}; // Convert Python string/null to JS string/null
-
-        // Only initialize player if HLS is ready and the stream URL is available
-        if (hlsReady && masterPlaylistStreamUrl) {
-          console.log("HLS প্রস্তুত। স্ট্রিমিং URL (সার্ভার ক্যাশ):", masterPlaylistStreamUrl);
+        {% if hls_ready %}
           const video = document.getElementById('player');
-
-          // Basic check if video element exists
           if (!video) {
-            console.error("Plyr প্লেয়ারের জন্য ভিডিও ট্যাগ (#player) খুঁজে পাওয়া যায়নি।");
+            console.error("Plyr প্লেয়ারের জন্য ভিডিও ট্যাগ খুঁজে পাওয়া যায়নি।");
             return;
           }
 
-          const source = masterPlaylistStreamUrl; // The URL to load, e.g., /stream/master.m3u8
-          let player = null; // Plyr instance
-          let hlsInstance = null; // HLS.js instance
+          const source = '/hls/master.m3u8';
+          let player = null;
+          let hlsInstance = null;
 
-          // Check if HLS.js is supported by the browser
           if (Hls.isSupported()) {
             console.log("HLS.js সমর্থিত। hls.js দিয়ে প্লেয়ার ইনিশিয়ালাইজ করা হচ্ছে...");
-            hlsInstance = new Hls({
-                 // HLS.js configuration options (optional)
-                 // Example: Start loading slightly ahead
-                 // maxBufferLength: 30, // seconds
-                 // Example: Limit bandwidth initially to check network speed
-                 // capLevelToPlayerSize: true,
-            });
+            hlsInstance = new Hls({ /* HLS config options */ });
 
-            // --- HLS.js Error Handling ---
             hlsInstance.on(Hls.Events.ERROR, function (event, data) {
               console.error('HLS Error:', data);
-              // Attempt recovery for fatal errors
               if (data.fatal) {
                 switch (data.type) {
-                  case Hls.ErrorTypes.NETWORK_ERROR:
-                    console.warn('HLS Network error - trying to recover by restarting load...');
-                    hlsInstance.startLoad(); // Attempt to restart loading
-                    break;
-                  case Hls.ErrorTypes.MEDIA_ERROR:
-                     console.warn('HLS Media error - trying to recover media...');
-                    hlsInstance.recoverMediaError(); // Attempt to recover
-                    break;
+                  case Hls.ErrorTypes.NETWORK_ERROR: hlsInstance.startLoad(); break;
+                  case Hls.ErrorTypes.MEDIA_ERROR: hlsInstance.recoverMediaError(); break;
                   default:
-                    // Unrecoverable error - destroy HLS instance and show error message
-                    console.error('Unrecoverable HLS error. Destroying HLS instance.');
+                    if (player) player.destroy();
                     if (hlsInstance) hlsInstance.destroy();
-                    // Update UI to inform user
-                    const container = document.getElementById('player-container');
-                    if(container) container.innerHTML = '<div class="status error">ভিডিও লোড হতে মারাত্মক সমস্যা হয়েছে। অনুগ্রহ করে পৃষ্ঠাটি রিফ্রেশ করুন।<br><small>HLS Error: ' + data.details + '</small></div>';
                     break;
                 }
-              } else {
-                  // Log non-fatal errors for debugging
-                   console.warn('Non-fatal HLS error occurred:', data);
               }
             });
 
-            // Attach HLS.js to the video element
             hlsInstance.attachMedia(video);
 
-            // --- HLS.js Manifest Parsed Event ---
-            // This event fires after the master playlist is loaded and parsed
             hlsInstance.on(Hls.Events.MANIFEST_PARSED, function (event, data) {
               console.log('HLS ম্যানিফেস্ট পার্স হয়েছে। উপলব্ধ লেভেল:', data.levels);
 
-              // --- Plyr Initialization with Quality Selection ---
-              if (data.levels && data.levels.length > 0) {
-                    // Sort levels by bitrate (highest first)
+              if (data.levels && data.levels.length > 1) {
                     const sortedLevels = [...data.levels].sort((a, b) => b.bitrate - a.bitrate);
                     const qualityOptionsBitrates = sortedLevels.map(level => level.bitrate);
+                    console.log('উপলব্ধ কোয়ালিটি (বিটরেট):', qualityOptionsBitrates);
 
-                    // Create display labels for each quality level (bitrate)
+                    // --- লেবেল তৈরির জন্য ম্যাপিং অবজেক্ট ---
                     const qualityLabelsMap = {};
                     sortedLevels.forEach(level => {
+                         // যদি level.height পাওয়া যায়, তাহলে '720p' ফরম্যাট ব্যবহার করি
+                         // নাহলে, বিটরেট কে kbps এ দেখাই
                         const label = level.height ? `${level.height}p` : `${Math.round(level.bitrate / 1000)} kbps`;
-                        qualityLabelsMap[level.bitrate] = label;
+                        qualityLabelsMap[level.bitrate] = label; // key = bitrate, value = label
                     });
                     console.log('বিটরেটের জন্য জেনারেট করা লেবেল:', qualityLabelsMap);
+                    // --- ম্যাপিং তৈরি শেষ ---
 
-                    // Initialize Plyr player
+                    // Plyr ইনিশিয়ালাইজ করা (i18n অপশন সহ)
                     player = new Plyr(video, {
-                        // debug: true, // Enable Plyr debugging logs if needed
-                        // captions: { active: true, update: true, language: 'en' }, // Example captions settings
                         quality: {
-                            default: sortedLevels[0].bitrate, // Default to highest quality bitrate
-                            options: qualityOptionsBitrates, // Pass the array of bitrates for options
-                            forced: true, // Force Plyr to use HLS.js for switching
-                            // Callback function when user selects a quality
+                            default: sortedLevels[0].bitrate, // সর্বোচ্চ বিটরেট ডিফল্ট
+                            options: qualityOptionsBitrates, // অপশন হিসেবে বিটরেট সংখ্যাগুলোই থাকবে
+                            forced: true,
                             onChange: (selectedBitrate) => {
-                                console.log("Plyr: কোয়ালিটি পরিবর্তন সিলেক্ট হয়েছে (বিটরেট):", selectedBitrate);
-                                if (hlsInstance) {
-                                     // Find the hls.js level index matching the selected bitrate
-                                     let newLevelIndex = hlsInstance.levels.findIndex(level => level.bitrate === selectedBitrate);
-                                     if (newLevelIndex !== -1) {
-                                         console.log(`Plyr: HLS লেভেল পরিবর্তন করা হচ্ছে ইন্ডেক্স ${newLevelIndex} এ`);
-                                         // Tell hls.js to switch to the selected level
-                                         hlsInstance.currentLevel = newLevelIndex;
-                                     } else {
-                                         // If bitrate not found (shouldn't happen often), switch to auto mode
-                                         console.warn(`Plyr: সিলেক্ট করা বিটরেট ${selectedBitrate} HLS লেভেলে খুঁজে পাওয়া যায়নি। অটো (-1) তে সেট করা হচ্ছে।`);
-                                         hlsInstance.currentLevel = -1; // Let hls.js decide (auto)
-                                     }
+                                console.log("নতুন কোয়ালিটি সিলেক্ট হয়েছে (বিটরেট):", selectedBitrate);
+                                let newLevelIndex = hlsInstance.levels.findIndex(level => level.bitrate === selectedBitrate);
+                                if (newLevelIndex !== -1) {
+                                    console.log(`HLS লেভেল পরিবর্তন করা হচ্ছে ইন্ডেক্স ${newLevelIndex} এ`);
+                                    hlsInstance.currentLevel = newLevelIndex;
+                                } else {
+                                    console.warn(`সিলেক্ট করা বিটরেট ${selectedBitrate} খুঁজে পাওয়া যায়নি। অটোমেটিক (-1) এ সেট করা হচ্ছে।`);
+                                    hlsInstance.currentLevel = -1;
                                 }
                             },
                         },
-                        // Internationalization - provide the generated labels to Plyr
+                        // --- i18n সেটিংস যোগ করা ---
                         i18n: {
-                            qualityLabel: qualityLabelsMap,
-                            // You can add other translations here if needed
+                            qualityLabel: qualityLabelsMap // তৈরি করা লেবেল ম্যাপিং এখানে পাস করা
+                            // আপনি চাইলে অন্যান্য লেবেলও এখানে কাস্টমাইজ করতে পারেন
                             // quality: 'Quality',
                             // speed: 'Speed',
-                            // settings: 'সেটিংস',
-                            // Etc.
-                        },
-                        // Add desired controls
-                        // controls: ['play-large', 'play', 'progress', 'current-time', 'mute', 'volume', 'captions', 'settings', 'pip', 'airplay', 'fullscreen'],
+                            // normal: 'Normal',
+                        }
+                        // --- i18n সেটিংস শেষ ---
                     });
 
-                    // Make player and hls instances accessible globally (optional, for debugging)
                     window.player = player;
                     window.hls = hlsInstance;
 
               } else {
-                  // If only one level or no levels found in manifest
-                  console.warn("HLS ম্যানিফেস্টে একটির বেশি কোয়ালিটি লেভেল পাওয়া যায়নি বা কোনো লেভেল নেই। কোয়ালিটি সিলেকশন মেনু যুক্ত করা হচ্ছে না।");
-                  // Initialize Plyr without quality options
-                  player = new Plyr(video, { /* Basic Plyr config */ });
+                  console.warn("HLS ম্যানিফেস্টে একটির বেশি কোয়ালিটি লেভেল পাওয়া যায়নি। কোয়ালিটি সিলেকশন মেনু যুক্ত করা হচ্ছে না।");
+                  player = new Plyr(video, {});
                   window.player = player;
-                  window.hls = hlsInstance; // Keep hls instance if needed
+                  window.hls = hlsInstance;
               }
             });
 
-            // --- Load the HLS Source ---
-            // This triggers the MANIFEST_PARSED event above once loaded
-            console.log("HLS সোর্স লোড করা হচ্ছে (সার্ভার থেকে):", source);
             hlsInstance.loadSource(source);
 
           } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-                // Fallback for browsers with native HLS support (e.g., Safari on iOS/macOS)
-                // Native HLS might not support adaptive quality switching as smoothly as hls.js
-                console.warn("HLS.js সমর্থিত নয়, কিন্তু নেটিভ HLS সাপোর্ট আছে (যেমন Safari)। ভিডিও প্লে হবে কিন্তু অ্যাডাপ্টিভ স্ট্রিমিং ব্রাউজারের উপর নির্ভরশীল।");
-                video.src = source; // Set the server's stream URL directly
-                // Initialize Plyr with basic config for native HLS
-                player = new Plyr(video, { /* Optional basic Plyr config for native */ });
+                console.warn("HLS.js সমর্থিত নয়, কিন্তু নেটিভ HLS সাপোর্ট আছে। কোয়ালিটি সিলেকশন মেনু কাজ নাও করতে পারে।");
+                video.src = source;
+                player = new Plyr(video, {});
                 window.player = player;
           } else {
-            // HLS is not supported at all by the browser
             console.error("দুঃখিত, আপনার ব্রাউজার HLS ভিডিও সমর্থন করে না।");
             const container = document.getElementById('player-container');
-            // Display error message to the user
-            if(container) container.innerHTML = '<div class="status error">দুঃখিত, আপনার ব্রাউজার HLS ভিডিও প্লেব্যাক সমর্থন করে না। অন্য একটি ব্রাউজার চেষ্টা করুন।</div>';
+            if(container) container.innerHTML = '<div class="status error">দুঃখিত, আপনার ব্রাউজার HLS ভিডিও সমর্থন করে না।</div>';
           }
 
-        } else {
-           // HLS is not ready or stream URL is missing (e.g., still processing or error)
-           console.log("HLS প্রস্তুত নয় বা স্ট্রিমিং URL পাওয়া যায়নি। প্লেয়ার লোড হচ্ছে না।");
-           // Keep the player container hidden (it should be hidden by default based on server-side logic)
+        {% else %}
+           console.log("HLS এখনও প্রস্তুত নয়। প্লেয়ার লোড হচ্ছে না।");
            const playerContainer = document.getElementById('player-container');
-           if(playerContainer && !playerContainer.classList.contains('hidden')) {
-               playerContainer.classList.add('hidden');
-           }
-        }
+           if(playerContainer) playerContainer.classList.add('hidden');
+        {% endif %}
       });
     </script>
 
