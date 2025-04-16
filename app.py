@@ -18,7 +18,7 @@ app = Flask(__name__)
 
 # === Configuration Constants ===
 # <<<--- শুধুমাত্র এই লাইনটি পরিবর্তন করা হয়েছে --->>>
-VIDEO_URL = "https://www.dropbox.com/scl/fi/kw2rpr2vsl7hf9gaddtsg/VID_20250330_041149_786.mp4?rlkey=rb347g41y8r0ekqvu3vea2znp&st=c15wzwjp&raw=1"
+VIDEO_URL = "https://www.dropbox.com/scl/fi/gi8jigrbw2reak0e4nu8z/Record_2025-04-06-21-11-19.mp4?rlkey=ryhqk8ik9ubmxlk47yxdafb1a&st=c7udhchd&raw=1"
 # <<<------------------------------------------>>>
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
