@@ -2,23 +2,21 @@
 <html>
 <head>
     <title>Anime Stream</title>
-    <script src="https://cdn.jwplayer.com/libraries/your-player-library.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
 </head>
 <body>
-    <h1>Streaming Anime</h1>
-
-    {% if video_url %}
-        <div id="player"></div>
-        <script>
-            jwplayer("player").setup({
-                file: "{{ video_url }}",
-                width: "100%",
-                aspectratio: "16:9",
-                type: "hls"
-            });
-        </script>
-    {% else %}
-        <p>Loading video...</p>
-    {% endif %}
+    <h1>Watch Anime</h1>
+    <video id="video" controls width="100%"></video>
+    <script>
+        const video = document.getElementById('video');
+        const videoUrl = "{{ video_url }}";
+        if (Hls.isSupported()) {
+            const hls = new Hls();
+            hls.loadSource(videoUrl);
+            hls.attachMedia(video);
+        } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+            video.src = videoUrl;
+        }
+    </script>
 </body>
 </html>
