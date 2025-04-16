@@ -371,5 +371,5 @@ start_processing_thread()
 if __name__ == '__main__':
     # Use port 8080 for Replit webview proxy
     # Set debug=False for stability on Replit
-    app.run(host='0.0.0.0', port=8080, debug=False)
+    app.run(host='0.0.0.0', port=8000, debug=False)
 
