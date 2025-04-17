@@ -1,12 +1,14 @@
-# app.py
+# app.py (Main Server)
 import os
 import subprocess
 import requests
 import threading
 import logging
 import time
-import json # ffprobe আউটপুট পার্স করার জন্য
-from flask import Flask, render_template, send_from_directory, abort
+import json
+import uuid # For unique video IDs
+import shutil # For file operations like moving
+from flask import Flask, request, render_template, send_from_directory, abort, jsonify, url_for, redirect
 
 # === Logging Configuration ===
 logging.basicConfig(
@@ -19,64 +21,37 @@ logging.basicConfig(
 app = Flask(__name__)
 
 # === Configuration Constants ===
-# মূল ভিডিও URL (ধরে নিলাম এতে ইংরেজি অডিও আছে - অনুগ্রহ করে আসল URL ব্যবহার করুন)
-VIDEO_URL = "https://video-mxp1-1.xx.fbcdn.net/o1/v/t2/f2/m69/AQM8S3pFxa70tno6zop7jYr1U16B60EHmFPInE6TGBwoOaJnQOXYtCml3Qkpv-p01h-Mq8WY8cuwf4HDp-EFVkCJ.mp4?strext=1&_nc_cat=103&_nc_sid=5e9851&_nc_ht=video-mxp1-1.xx.fbcdn.net&_nc_ohc=PsDTzb3w2UsQ7kNvwEdobVT&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5GQUNFQk9PSy4uQzMuNzIwLmRhc2hfaDI2NC1iYXNpYy1nZW4yXzcyMHAiLCJ4cHZfYXNzZXRfaWQiOjE0MDc5NDYzMjM1NTI4NTksInZpX3VzZWNhc2VfaWQiOjEwMTIyLCJkdXJhdGlvbl9zIjoyMDAsInVybGdlbl9zb3VyY2UiOiJ3d3cifQ%3D%3D&ccb=17-1&vs=f2a9875f9f41aa3d&_nc_vs=HBksFQIYOnBhc3N0aHJvdWdoX2V2ZXJzdG9yZS9HTmhqVUIzRVlmM3FMbU1DQVBzVVd5WFBEaXNHYm1kakFBQUYVAALIAQAVAhg6cGFzc3Rocm91Z2hfZXZlcnN0b3JlL0dJTkhVaDB6TFExRGFSOEZBR2tockdVaUNUdEdickZxQUFBRhUCAsgBACgAGAAbAogHdXNlX29pbAExEnByb2dyZXNzaXZlX3JlY2lwZQExFQAAJrap08ehoYAFFQIoAkMzLBdAaRiLQ5WBBhgZZGFzaF9oMjY0LWJhc2ljLWdlbjJfNzIwcBEAdQIA&_nc_zt=28&oh=00_AfEkU99vSfDRfVji51klRkyvAj5hml5FUlj3hFYozoLfGg&oe=68056F07&dl=1"
-DOWNLOADED_FILENAME_BASE = "source_video" # ফাইলের নামের ভিত্তি
-
-# অতিরিক্ত অডিও ট্র্যাকের সোর্স (ভাষা কোড -> {url, filename})
-# *** গুরুত্বপূর্ণ: নিচের URL গুলো আপনার হিন্দি এবং জাপানিজ অডিওসহ ভিডিওর সঠিক URL দিয়ে প্রতিস্থাপন করুন ***
-ADDITIONAL_AUDIO_SOURCES = {
-    "hin": { # হিন্দি অডিওর জন্য
-        "url": "https://video-lga3-1.xx.fbcdn.net/o1/v/t2/f2/m69/AQPMl8zJMnuo69uJZ2Vb5qA0zubB50NBwQXYxVaWgl5EhRxQerzsJsMZe-GK2ko7yKxeHwS9B41kbp0pAle1oSYE.mp4?strext=1&_nc_cat=108&_nc_sid=8bf8fe&_nc_ht=video-lga3-1.xx.fbcdn.net&_nc_ohc=xzuPd_k2hp8Q7kNvwH2ar5R&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5GQUNFQk9PSy4uQzMuMzYwLnN2ZV9zZCIsInhwdl9hc3NldF9pZCI6MTA4Mjk0NzQ0Njg5MzYwMywidmlfdXNlY2FzZV9pZCI6MTAxMjIsImR1cmF0aW9uX3MiOjI0OSwidXJsZ2VuX3NvdXJjZSI6Ind3dyJ9&ccb=17-1&_nc_zt=28&oh=00_AfGvELNyDQqknfjjIeWGbpzBKq-JJG_xJSv1CM10lxqDMQ&oe=68064F92&dl=1", # <--- এখানে সঠিক URL দিন
-        "filename": f"{DOWNLOADED_FILENAME_BASE}_hindi_audio.mp4"
-    },
-    "jpn": { # জাপানিজ অডিওর জন্য
-        "url": "https://video-fra5-2.xx.fbcdn.net/o1/v/t2/f2/m69/AQPnpjAXNAHfjEG9CGWmu6SvHIGn8TnikG1T-wX7bBEK7YEU7O0U-6r5_S_AjjX-RJEwi7qkGZRX-ryxsW-I_K29.mp4?strext=1&_nc_cat=109&_nc_sid=8bf8fe&_nc_ht=video-fra5-2.xx.fbcdn.net&_nc_ohc=ruI9FINodn4Q7kNvwFWQb05&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5GQUNFQk9PSy4uQzMuMzYwLnN2ZV9zZCIsInhwdl9hc3NldF9pZCI6OTI1MTc4NzgzMTQwOTE5LCJ2aV91c2VjYXNlX2lkIjoxMDEyMiwiZHVyYXRpb25fcyI6MjA1LCJ1cmxnZW5fc291cmNlIjoid3d3In0%3D&ccb=17-1&_nc_zt=28&oh=00_AfHADl463iCltfsTfM3yFX_eYe0AMiItht5QdPnLZ2AfUA&oe=680621F5&dl=1", # <--- এখানে সঠিক URL দিন
-        "filename": f"{DOWNLOADED_FILENAME_BASE}_japanese_audio.mp4"
-    }
-    # প্রয়োজনে আরো ভাষা যোগ করতে পারেন
-}
-
-# ডাউনলোড করা ফাইলের তথ্য (মূল ভিডিও সহ)
-# মূল ভিডিওর ভাষা কোড 'eng' ধরা হলো
-DOWNLOAD_TARGETS = {
-    "eng": { # ইংরেজি (মূল ভিডিও)
-        "url": VIDEO_URL,
-        "filename": f"{DOWNLOADED_FILENAME_BASE}_eng_video.mp4" # নাম পরিবর্তন করে ভাষা উল্লেখ করা হলো
-    },
-    **ADDITIONAL_AUDIO_SOURCES # ডিকশনারি দুটি মার্জ করা হলো
-}
-
-# অডিও ট্র্যাকের বিস্তারিত তথ্য (মাস্টার প্লেলিস্ট তৈরির জন্য)
-# DOWNLOAD_TARGETS এর কী (key) গুলো এখানে ল্যাঙ্গুয়েজ কোড হিসেবে ব্যবহৃত হবে
-AUDIO_TRACK_DETAILS = {
-    "eng": {"name": "English", "default": True}, # কোনটি ডিফল্ট হবে
-    "hin": {"name": "Hindi", "default": False},
-    "jpn": {"name": "Japanese", "default": False},
-    # DOWNLOAD_TARGETS এ যোগ করা অন্যান্য ভাষার জন্যও এখানে তথ্য যোগ করুন
-}
-# প্রক্রিয়াকরণের শুরুতে সক্রিয় ভাষার তালিকা (ডাউনলোড ব্যর্থ হলে এখান থেকে বাদ যাবে)
-ACTIVE_AUDIO_LANGS = list(DOWNLOAD_TARGETS.keys())
-
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DOWNLOAD_DIR = os.path.join(BASE_DIR, 'downloads')
+UPLOAD_DIR = os.path.join(BASE_DIR, 'uploads')
 STATIC_DIR = os.path.join(BASE_DIR, 'static')
-HLS_DIR = os.path.join(STATIC_DIR, 'hls')
-MASTER_PLAYLIST_NAME = "master.m3u8"
+HLS_DIR = os.path.join(STATIC_DIR, 'hls') # Main dir for all HLS videos
+VIDEO_STATUS_FILE = os.path.join(BASE_DIR, 'video_status.json') # Simple JSON DB for status
+MAX_CONTENT_LENGTH = 1024 * 1024 * 1024 # 1 GB upload limit (adjust as needed)
+app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH
+
+# URLs for the converter servers (Replace with actual IPs/hostnames and ports)
+CONVERTER_SERVERS = {
+    "360p": "http://localhost:5001", # Example URL for 360p converter
+    "480p": "http://localhost:5002", # Example URL for 480p converter
+    "720p": "https://seven20p-tq7s.onrender.com"  # Example URL for 720p converter
+}
 
 # Define desired output resolutions and bitrates (height, video_bitrate, audio_bitrate)
-RESOLUTIONS = [
-    (360, '800k', '96k'),
-    (480, '1400k', '128k'),
-    (720, '2800k', '128k') # যদি মূল ভিডিও 720p বা তার বেশি হয়
-]
-FFMPEG_TIMEOUT = 3600 # Timeout for each ffmpeg command in seconds (60 minutes) - প্রয়োজনে বাড়ান
+# Passed to converters
+RESOLUTIONS = {
+    "360p": (360, '800k', '96k'),
+    "480p": (480, '1400k', '128k'),
+    "720p": (720, '2800k', '128k')
+}
 
-# === State Management Files ===
-PROCESSING_LOCK_FILE = os.path.join(BASE_DIR, '.processing.lock')
-HLS_READY_FILE = os.path.join(HLS_DIR, '.hls_ready')
-ALL_DOWNLOADS_COMPLETE_MARKER = os.path.join(DOWNLOAD_DIR, '.all_downloads_complete')
-PROCESSING_ERROR_FILE = os.path.join(BASE_DIR, '.processing.error')
+FFMPEG_TIMEOUT = 3600 # Timeout for each ffmpeg command (on converters) in seconds (60 minutes)
+
+# === State Management ===
+# In-memory dictionary to hold video processing status.
+# For persistence, load/save from VIDEO_STATUS_FILE.
+# Structure: { "video_id": {"status": "...", "error": "...", "qualities_done": [], "manifest_path": "..."} }
+video_processing_status = {}
+status_lock = threading.Lock() # To safely access/modify the status dict
 
 # === Helper Functions ===
 
@@ -88,774 +63,479 @@ def ensure_dir(directory):
             logging.info(f"Created directory: {directory}")
         except OSError as e:
             logging.error(f"Failed to create directory {directory}: {e}")
-            raise # Re-raise exception as this is critical
+            raise
 
-def get_video_duration(file_path):
-    """Gets the duration of a media file in seconds using ffprobe."""
-    if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
-        logging.error(f"Cannot get duration: File not found or is empty at {file_path}")
-        return None
-
-    command = [
-        'ffprobe',
-        '-v', 'quiet',
-        '-print_format', 'json',
-        '-show_format',
-        '-show_streams', # Include stream info (though format duration is usually sufficient)
-        file_path
-    ]
-    logging.info(f"Running ffprobe to get duration for: {file_path}")
-    try:
-        result = subprocess.run(command, check=True, capture_output=True, text=True, timeout=60) # Increased timeout for ffprobe
-        data = json.loads(result.stdout)
-        duration_str = data.get('format', {}).get('duration')
-
-        if duration_str:
-            duration = float(duration_str)
-            logging.info(f"Duration found: {duration:.3f} seconds")
-            if duration <= 0:
-                 logging.warning(f"ffprobe reported non-positive duration ({duration}) for {file_path}. Check file integrity.")
-                 return None # Treat non-positive duration as invalid
-            return duration
-        else:
-            # Fallback: Check streams if format duration is missing (less common)
-            first_video_stream = next((s for s in data.get('streams', []) if s.get('codec_type') == 'video'), None)
-            if first_video_stream and 'duration' in first_video_stream:
-                duration_str = first_video_stream['duration']
-                duration = float(duration_str)
-                logging.info(f"Duration found in video stream: {duration:.3f} seconds")
-                if duration <= 0:
-                    logging.warning(f"ffprobe reported non-positive stream duration ({duration}) for {file_path}.")
-                    return None
-                return duration
-            else:
-                 logging.error(f"Could not find duration in ffprobe output (format or stream) for {file_path}.")
-                 return None
-
-    except FileNotFoundError:
-        logging.error("ffprobe command not found. Ensure ffmpeg (and ffprobe) is installed and in PATH.")
-        return None
-    except subprocess.CalledProcessError as e:
-        logging.error(f"ffprobe failed for {file_path} with return code {e.returncode}. Error: {e.stderr}")
-        return None
-    except subprocess.TimeoutExpired:
-        logging.error(f"ffprobe timed out after 60 seconds for {file_path}")
-        return None
-    except json.JSONDecodeError as e:
-        logging.error(f"Failed to parse ffprobe JSON output for {file_path}: {e}")
-        return None
-    except ValueError as e:
-         logging.error(f"Failed to convert duration to float for {file_path}: {e}")
-         return None
-    except Exception as e:
-        logging.error(f"An unexpected error occurred while getting duration for {file_path}: {e}", exc_info=True)
-        return None
-
-def check_ffmpeg_tools():
-    """Checks if both ffmpeg and ffprobe are installed and accessible."""
-    ffmpeg_ok = False
-    ffprobe_ok = False
-    error_details = ""
-
-    # Check ffmpeg
-    try:
-        subprocess.run(['ffmpeg', '-version'], check=True, capture_output=True, text=True, timeout=10)
-        logging.info("ffmpeg check successful.")
-        ffmpeg_ok = True
-    except Exception as e:
-        error_details += f"ffmpeg check failed: {e}\n"
-        logging.error(f"ffmpeg check failed: {e}")
-
-    # Check ffprobe
-    try:
-        subprocess.run(['ffprobe', '-version'], check=True, capture_output=True, text=True, timeout=10)
-        logging.info("ffprobe check successful.")
-        ffprobe_ok = True
-    except Exception as e:
-        error_details += f"ffprobe check failed: {e}\n"
-        logging.error(f"ffprobe check failed: {e}")
-
-    if ffmpeg_ok and ffprobe_ok:
-        return True
-    else:
-        error_msg = f"Required tool(s) missing or failed check:\n{error_details}"
-        logging.error(error_msg)
-        # Write error to file for user visibility in UI
-        try:
-            # Overwrite previous error file if tool check fails
-            with open(PROCESSING_ERROR_FILE, 'w') as f:
-                f.write(f"Fatal Error: ffmpeg and/or ffprobe are required but not found or not working.\nPlease install ffmpeg and ensure it's in the system PATH.\n\nDetails:\n{error_details}")
-        except IOError as io_err:
-             logging.error(f"Failed to write ffmpeg/ffprobe error to file: {io_err}")
-        return False
-
-
-def download_file(url, dest_path, lang_code):
-    """Downloads a single file, handling potential issues."""
-    logging.info(f"Attempting download for '{lang_code}' from {url} to {dest_path}...")
-    # Check if file exists and is non-empty
-    if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0:
-        logging.info(f"File for '{lang_code}' already exists and is not empty: {dest_path}. Skipping download.")
-        return True
-    elif os.path.exists(dest_path):
-         logging.warning(f"File for '{lang_code}' exists but is empty, removing before download: {dest_path}")
-         try:
-             os.remove(dest_path)
-         except OSError as e:
-             logging.error(f"Could not remove empty file {dest_path}: {e}")
-             # Continue to attempt download anyway
-
-    try:
-        with requests.get(url, stream=True, timeout=(15, 300)) as r: # (connect_timeout, read_timeout)
-            r.raise_for_status() # Check for HTTP errors like 404, 500
-            total_size = int(r.headers.get('content-length', 0))
-            bytes_downloaded = 0
-            start_time = time.time()
-
-            log_prefix = f"Downloading '{lang_code}'"
-            if total_size > 0:
-                 logging.info(f"{log_prefix} ({total_size / (1024*1024):.2f} MB)...")
-            else:
-                 logging.info(f"{log_prefix} (size unknown)...")
-
-            with open(dest_path, 'wb') as f:
-                for chunk in r.iter_content(chunk_size=8192*4): # Use a larger chunk size
-                    if chunk: # filter out keep-alive new chunks
-                        f.write(chunk)
-                        bytes_downloaded += len(chunk)
-
-            end_time = time.time()
-            elapsed_time = end_time - start_time
-            # Check if download was actually performed or skipped due to existing file
-            if elapsed_time < 0.01 and bytes_downloaded == 0 and os.path.exists(dest_path):
-                 # This likely means the file existed from a previous run; already logged above
-                 pass
-            else:
-                if elapsed_time > 0:
-                    download_speed = (bytes_downloaded / (1024*1024)) / elapsed_time
-                    logging.info(f"Download for '{lang_code}' complete ({bytes_downloaded / (1024*1024):.2f} MB) in {elapsed_time:.2f}s ({download_speed:.2f} MB/s).")
-                else:
-                    logging.info(f"Download for '{lang_code}' complete ({bytes_downloaded / (1024*1024):.2f} MB) instantly (likely cached or very fast).")
-
-
-        # Final check after download
-        if not os.path.exists(dest_path) or os.path.getsize(dest_path) == 0:
-             # This case might happen if the download was interrupted or server sent empty response
-             raise ValueError(f"Downloaded file for '{lang_code}' is missing or empty after download attempt.")
-        return True
-
-    # Specific error handling
-    except requests.exceptions.Timeout as e:
-        error_msg = f"Download timed out for '{lang_code}' ({url}): {e}"
-    except requests.exceptions.HTTPError as e:
-         error_msg = f"HTTP error during download for '{lang_code}' ({url}): {e.response.status_code} {e.response.reason}"
-    except requests.exceptions.ConnectionError as e:
-        error_msg = f"Connection error during download for '{lang_code}' ({url}): {e}"
-    except requests.exceptions.RequestException as e:
-        error_msg = f"Download failed for '{lang_code}' ({url}) (Network/Request Error): {e}"
-    except (IOError, ValueError, Exception) as e:
-        error_msg = f"Download or file handling failed for '{lang_code}' ({url}): {e}"
-
-    # Log the specific error
-    logging.error(error_msg)
-
-    # Clean up partially downloaded file on error
-    if os.path.exists(dest_path):
-        try:
-            # Check size again before removing, might be valid from previous run
-            if os.path.getsize(dest_path) == 0:
-                os.remove(dest_path)
-                logging.info(f"Removed empty/failed download artifact for '{lang_code}': {dest_path}")
-            else:
-                 logging.warning(f"Download failed, but existing file {dest_path} has size > 0. Leaving it intact.")
-                 return True # Consider existing file usable if download fails
-        except OSError as e_rem:
-            logging.warning(f"Could not remove failed/empty download artifact {dest_path}: {e_rem}")
-
-    # Append error message to the main error file for UI visibility
-    try:
-        with open(PROCESSING_ERROR_FILE, 'a') as f: f.write(error_msg + "\n")
-    except IOError as io_err:
-        logging.error(f"Failed to write download error to processing error file: {io_err}")
-
-    return False
-
-
-def download_all_videos(target_dict, download_dir):
-    """Downloads all necessary video files specified in target_dict."""
-    global ACTIVE_AUDIO_LANGS # Allow modification based on success/failure
-    ensure_dir(download_dir)
-    active_langs_on_entry = list(ACTIVE_AUDIO_LANGS) # Keep track of initial list
-
-    if os.path.exists(ALL_DOWNLOADS_COMPLETE_MARKER):
-        logging.info("Overall download marker found. Verifying individual files...")
-        all_files_ok = True
-        missing_or_empty_files = []
-        for lang_code in active_langs_on_entry:
-            details = target_dict.get(lang_code)
-            if not details: continue # Should not happen if active_langs is correct
-            path = os.path.join(download_dir, details['filename'])
-            if not os.path.exists(path) or os.path.getsize(path) == 0:
-                logging.warning(f"Marker exists, but file for '{lang_code}' ({path}) is missing or empty.")
-                all_files_ok = False
-                missing_or_empty_files.append(lang_code)
-
-        if all_files_ok:
-            logging.info("All required files verified based on active list. Skipping download phase.")
-            ACTIVE_AUDIO_LANGS = active_langs_on_entry # Confirm the list
-            return True
-        else:
-            logging.warning(f"Need to re-download or verify files for: {missing_or_empty_files}. Removing marker and starting download phase.")
+def load_status():
+    """Loads video status from the JSON file."""
+    global video_processing_status
+    with status_lock:
+        if os.path.exists(VIDEO_STATUS_FILE):
             try:
-                os.remove(ALL_DOWNLOADS_COMPLETE_MARKER)
-            except OSError as e:
-                logging.error(f"Could not remove stale download marker: {e}. Proceeding with downloads.")
-            # Reset ACTIVE_AUDIO_LANGS, it will be rebuilt based on download success
-            ACTIVE_AUDIO_LANGS = []
-    else:
-        logging.info("Overall download marker not found. Starting download phase.")
-        ACTIVE_AUDIO_LANGS = [] # Reset, build based on success
-
-
-    # --- Download Phase ---
-    # Clear previous cumulative error file before starting fresh download attempt
-    if os.path.exists(PROCESSING_ERROR_FILE):
-        try:
-            # Only remove if we are sure we are starting downloads, not just verifying
-            if not os.path.exists(ALL_DOWNLOADS_COMPLETE_MARKER):
-                 os.remove(PROCESSING_ERROR_FILE)
-                 logging.info("Removed previous processing error file before download phase.")
-        except OSError as e:
-            logging.warning(f"Could not remove previous error file before download: {e}")
-
-    successful_langs = []
-    for lang_code, details in target_dict.items():
-        url = details['url']
-        filename = details['filename']
-        dest_path = os.path.join(download_dir, filename)
-
-        # Check for placeholder URLs
-        if not url or "আপনার_" in url or url.strip() == "":
-             logging.warning(f"Skipping download for '{lang_code}': URL is missing or is a placeholder.")
-             # Do not add to successful_langs, it won't be active
-             continue
-
-        logging.info(f"--- Downloading source for language: {lang_code} ---")
-        if download_file(url, dest_path, lang_code):
-            successful_langs.append(lang_code)
-            logging.info(f"Successfully downloaded or verified file for '{lang_code}'.")
+                with open(VIDEO_STATUS_FILE, 'r') as f:
+                    video_processing_status = json.load(f)
+                    logging.info(f"Loaded video status for {len(video_processing_status)} videos.")
+            except (json.JSONDecodeError, IOError) as e:
+                logging.error(f"Failed to load status file {VIDEO_STATUS_FILE}: {e}. Starting fresh.")
+                video_processing_status = {}
         else:
-            logging.error(f"Failed to download or verify file for language '{lang_code}'. It will be excluded.")
-            # Error details already logged and written to error file by download_file
+             logging.info("Status file not found. Starting fresh.")
+             video_processing_status = {}
 
-    # --- Post-Download Validation ---
-    ACTIVE_AUDIO_LANGS = successful_langs # Update global list based on success
-
-    # Critical Check: Ensure the primary video ('eng') was successful
-    primary_lang = 'eng'
-    if primary_lang not in ACTIVE_AUDIO_LANGS:
-         error_msg = f"CRITICAL FAILURE: Primary video ('{primary_lang}') could not be downloaded or verified. Cannot proceed."
-         logging.error(error_msg)
-         # Ensure this critical error is in the error file
-         try:
-             with open(PROCESSING_ERROR_FILE, 'a') as f: f.write("\n" + error_msg + "\n")
-         except IOError as io_err: logging.error(f"Failed to write critical download error to file: {io_err}")
-         return False # Cannot proceed
-
-    # Check if *any* audio tracks are available
-    if not ACTIVE_AUDIO_LANGS:
-        # This case should be covered by the primary check above, but as a safeguard:
-        error_msg = "CRITICAL FAILURE: No audio tracks (including primary) are available after download phase. Cannot proceed."
-        logging.error(error_msg)
-        with open(PROCESSING_ERROR_FILE, 'a') as f: f.write("\n" + error_msg + "\n")
-        return False
-
-    logging.info(f"Download phase complete. Active languages for processing: {ACTIVE_AUDIO_LANGS}")
-
-    # Create the marker file now that downloads are verified/complete for active langs
-    try:
-        with open(ALL_DOWNLOADS_COMPLETE_MARKER, 'w') as f:
-             f.write(time.strftime("%Y-%m-%d %H:%M:%S"))
-        logging.info(f"Created/Updated overall download marker: {ALL_DOWNLOADS_COMPLETE_MARKER}")
-        return True
-    except IOError as e:
-        error_msg = f"Failed to write overall download marker: {e}"
-        logging.error(error_msg)
-        with open(PROCESSING_ERROR_FILE, 'a') as f: f.write("\n" + error_msg + "\n")
-        # Proceeding might be okay, but state tracking is compromised
-        return False # Treat failure to write marker as a failure state
-
-
-def transcode_to_hls(download_targets, download_dir, output_base_dir, resolutions, active_langs):
-    """Transcodes video with multiple audio tracks to HLS format, trimming to main video duration."""
-    if os.path.exists(HLS_READY_FILE):
-        logging.info("HLS ready marker file found. Skipping transcoding.")
-        return True
-
-    primary_lang = 'eng' # Define the primary language code
-
-    # --- Get Primary Video Duration ---
-    if primary_lang not in active_langs:
-        # This should ideally be caught earlier, but double-check
-        error_msg = f"Primary language '{primary_lang}' is not in the active list for transcoding. Cannot proceed."
-        logging.error(error_msg)
-        with open(PROCESSING_ERROR_FILE, 'a') as f: f.write("\n" + error_msg + "\n")
-        return False
-
-    primary_details = download_targets[primary_lang]
-    primary_video_path = os.path.join(download_dir, primary_details['filename'])
-
-    video_duration = get_video_duration(primary_video_path)
-    if video_duration is None or video_duration <= 0: # Ensure duration is positive
-        error_msg = f"FATAL: Could not determine a valid positive duration for primary video '{primary_video_path}'. Cannot proceed with transcoding."
-        logging.error(error_msg)
+def save_status():
+    """Saves the current video status to the JSON file."""
+    with status_lock:
         try:
-            # Overwrite error file with this critical failure
-            with open(PROCESSING_ERROR_FILE, 'w') as f: f.write(error_msg)
-        except IOError as io_err:
-            logging.error(f"Failed to write critical duration error to file: {io_err}")
-        return False
-    logging.info(f"Determined primary video duration: {video_duration:.3f} seconds. Using this as the limit.")
-
-
-    # --- Input Validation and Mapping Setup ---
-    input_files = []
-    input_paths = {} # lang_code -> path
-    map_commands = []
-    audio_metadata_commands = []
-    output_audio_stream_index = 0 # Tracks the index of mapped *output* audio streams
-
-    # Add primary video input and map its video and audio
-    input_files.extend(['-i', primary_video_path])
-    input_paths[primary_lang] = primary_video_path
-    # Map first video stream from first input (0:v:0)
-    map_commands.extend(['-map', '0:v:0'])
-    # Map first audio stream from first input (0:a:0) - Assuming primary has audio
-    map_commands.extend(['-map', '0:a:0'])
-    # Add language metadata for this first output audio stream (index 0)
-    audio_metadata_commands.extend([f'-metadata:s:a:{output_audio_stream_index}', f'language={primary_lang}'])
-    output_audio_stream_index += 1
-
-    # Add other active language inputs and map their audio
-    input_index = 1 # Start from 1 for subsequent -i inputs
-    for lang_code in active_langs:
-        if lang_code == primary_lang:
-            continue # Already processed primary
-
-        details = download_targets[lang_code]
-        path = os.path.join(download_dir, details['filename'])
-        # File existence should be guaranteed by download_all_videos if lang is active
-        if not os.path.exists(path) or os.path.getsize(path) == 0:
-             logging.warning(f"File for active language '{lang_code}' ({path}) missing or empty during transcoding setup. Skipping.")
-             continue
-
-        input_files.extend(['-i', path])
-        input_paths[lang_code] = path
-        # Map the first audio stream from this input (input_index : a : 0)
-        map_commands.extend(['-map', f'{input_index}:a:0'])
-        # Add language metadata for this output audio stream (index output_audio_stream_index)
-        audio_metadata_commands.extend([f'-metadata:s:a:{output_audio_stream_index}', f'language={lang_code}'])
-        input_index += 1
-        output_audio_stream_index += 1
-
-    # Check if we ended up with any audio streams to process
-    if output_audio_stream_index == 0:
-         error_msg = "No valid audio streams could be mapped for transcoding (not even primary). Cannot proceed."
-         logging.error(error_msg)
-         with open(PROCESSING_ERROR_FILE, 'a') as f: f.write("\n" + error_msg + "\n")
-         return False
-
-    # Log the final setup
-    logging.info(f"Starting HLS transcoding for {len(active_langs)} languages: {active_langs} from {len(input_files)//2} input files.")
-    logging.info(f"Output duration limited to: {video_duration:.3f}s")
-    logging.info(f"Mapping commands: {map_commands}")
-    logging.info(f"Audio metadata commands: {audio_metadata_commands}")
-
-    ensure_dir(output_base_dir)
-    resolution_details_for_master = []
-
-
-    # --- Execute ffmpeg commands for each resolution ---
-    start_time_total = time.time()
-    transcoding_successful = True # Flag to track overall success
-
-    for height, v_bitrate, a_bitrate in resolutions:
-        res_output_dir = os.path.join(output_base_dir, str(height))
-        ensure_dir(res_output_dir)
-        segment_path_pattern = os.path.join(res_output_dir, 'segment_%03d.ts')
-        absolute_playlist_path = os.path.join(res_output_dir, 'playlist.m3u8') # Resolution specific playlist
-
-        # Base ffmpeg command
-        cmd = ['ffmpeg', '-hide_banner'] # Basic command start
-        cmd.extend(input_files)         # Add all -i inputs
-        cmd.extend(map_commands)        # Add all -map commands
-
-        # Add the crucial -t duration limit *before* output specifiers
-        cmd.extend(['-t', f'{video_duration:.6f}']) # Use high precision
-
-        # Video filters and encoding options
-        cmd.extend(['-vf', f'scale=-2:{height}']) # Scale video
-        cmd.extend(['-c:v', 'libx264', '-crf', '23', '-preset', 'veryfast']) # H.264 encoding
-        cmd.extend(['-b:v', v_bitrate, '-maxrate', v_bitrate, '-bufsize', f'{int(v_bitrate[:-1])*2}k']) # Bitrate control
-
-        # Audio encoding options (applied to all mapped output audio streams)
-        cmd.extend(['-c:a', 'aac', '-ar', '48000']) # AAC codec, standard sample rate
-        cmd.extend(['-b:a', a_bitrate]) # Apply the same audio bitrate to all output tracks
-
-        # Add language metadata to each output audio stream
-        cmd.extend(audio_metadata_commands)
-
-        # HLS output options
-        cmd.extend(['-f', 'hls'])
-        cmd.extend(['-hls_time', '6'])          # Segment duration
-        cmd.extend(['-hls_list_size', '0'])     # Keep all segments in playlist
-        cmd.extend(['-hls_segment_filename', segment_path_pattern]) # Segment naming pattern
-        cmd.extend(['-hls_flags', 'delete_segments+append_list']) # Overwrite existing segments cleanly
-        cmd.append(absolute_playlist_path)      # Output playlist for this resolution
-
-        logging.info(f"Running ffmpeg for {height}p (limited to {video_duration:.3f}s)...")
-        logging.debug(f"Command: {' '.join(cmd)}")
-        start_time_res = time.time()
-
-        try:
-            # Run ffmpeg command
-            result = subprocess.run(
-                cmd, check=True, capture_output=True, text=True, timeout=FFMPEG_TIMEOUT
-            )
-            end_time_res = time.time()
-            logging.info(f"ffmpeg finished successfully for {height}p in {end_time_res - start_time_res:.2f}s.")
-
-            # Store details for master playlist generation
-            # Calculate total bandwidth: video + (N * audio)
-            # Ensure a_bitrate string like '96k' is converted correctly
-            audio_bitrate_numeric = int(a_bitrate[:-1]) * 1000
-            total_audio_bitrate = output_audio_stream_index * audio_bitrate_numeric
-            video_bitrate_numeric = int(v_bitrate[:-1]) * 1000
-            total_bandwidth = video_bitrate_numeric + total_audio_bitrate
-
-            # Determine codecs (Example: H.264 main + AAC audio) - Adjust if needed!
-            # This might need to be more dynamic if codecs change based on input/settings
-            # For typical web video:
-            video_codec_str = "avc1.4D401F" # Example H.264 Main profile level 3.1
-            audio_codec_str = "mp4a.40.2"  # Example AAC-LC
-            combined_codecs = f'{video_codec_str},{audio_codec_str}'
-
-            resolution_details_for_master.append({
-                'bandwidth': total_bandwidth,
-                'height': height,
-                'playlist_path': os.path.join(str(height), 'playlist.m3u8'), # Relative path
-                'codecs': combined_codecs
-            })
-
-        # Handle potential errors during ffmpeg execution
-        except subprocess.CalledProcessError as e:
-            error_msg = (f"Transcoding failed for {height}p (ffmpeg exited with code {e.returncode}).\n"
-                         f"CMD: {' '.join(e.cmd)}\n"
-                         f"STDERR (last 1000 chars):\n...{e.stderr[-1000:]}")
-            logging.error(error_msg)
-            with open(PROCESSING_ERROR_FILE, 'a') as f: f.write("\n" + error_msg + "\n")
-            transcoding_successful = False; break # Stop processing other resolutions on failure
-        except subprocess.TimeoutExpired as e:
-            error_msg = f"Transcoding timed out for {height}p after {FFMPEG_TIMEOUT} seconds.\nCMD: {' '.join(e.cmd)}"
-            logging.error(error_msg)
-            with open(PROCESSING_ERROR_FILE, 'a') as f: f.write("\n" + error_msg + "\n")
-            transcoding_successful = False; break # Stop processing other resolutions on failure
+            # Create a copy to avoid issues if dict changes during write
+            status_copy = video_processing_status.copy()
+            with open(VIDEO_STATUS_FILE, 'w') as f:
+                json.dump(status_copy, f, indent=4)
+                logging.debug(f"Saved video status for {len(status_copy)} videos.")
+        except IOError as e:
+            logging.error(f"Failed to save status file {VIDEO_STATUS_FILE}: {e}")
         except Exception as e:
-            error_msg = f"Unexpected error during transcoding for {height}p: {e}"
-            logging.error(error_msg, exc_info=True)
-            with open(PROCESSING_ERROR_FILE, 'a') as f: f.write("\n" + error_msg + "\n")
-            transcoding_successful = False; break # Stop processing other resolutions on failure
+             logging.error(f"Unexpected error saving status: {e}", exc_info=True)
 
-    # --- Create Master Playlist (only if all resolutions succeeded) ---
-    if not transcoding_successful:
-        logging.error("Transcoding failed for one or more resolutions. Master playlist will not be generated.")
-        return False # Indicate failure
 
-    if not resolution_details_for_master:
-        error_msg = "Transcoding seemed to finish, but no resolution details were collected. Cannot generate master playlist."
-        logging.error(error_msg)
-        with open(PROCESSING_ERROR_FILE, 'a') as f: f.write("\n" + error_msg + "\n")
-        return False
+def update_video_status(video_id, status=None, error=None, quality_done=None, manifest_path=None):
+    """Updates the status of a video."""
+    with status_lock:
+        if video_id not in video_processing_status:
+            video_processing_status[video_id] = {"status": "unknown", "error": None, "qualities_done": [], "manifest_path": None}
 
-    logging.info("All resolutions transcoded successfully. Creating master playlist...")
-    master_playlist_content = "#EXTM3U\n#EXT-X-VERSION:3\n" # HLS version 3 is usually sufficient
+        if status is not None:
+            video_processing_status[video_id]["status"] = status
+        if error is not None:
+             # Append errors if multiple occur
+             current_error = video_processing_status[video_id].get("error")
+             if current_error:
+                 video_processing_status[video_id]["error"] = f"{current_error}\n{error}"
+             else:
+                video_processing_status[video_id]["error"] = error
+        if quality_done is not None:
+            if quality_done not in video_processing_status[video_id]["qualities_done"]:
+                 video_processing_status[video_id]["qualities_done"].append(quality_done)
+        if manifest_path is not None:
+            video_processing_status[video_id]["manifest_path"] = manifest_path
 
-    # Define the audio group ID (used to link audio tracks)
-    audio_group_id = "aac_multi_audio" # Descriptive ID
+    # Save status immediately after update
+    save_status()
+    logging.info(f"Updated status for {video_id}: {video_processing_status.get(video_id, {})}")
 
-    # Generate EXT-X-MEDIA tags for each active audio language
-    for lang_code in active_langs:
-        if lang_code in AUDIO_TRACK_DETAILS:
-            track_info = AUDIO_TRACK_DETAILS[lang_code]
-            default_flag = "YES" if track_info.get('default', False) else "NO"
-            autoselect_flag = "YES" # Typically YES for languages, user agent might prefer based on system lang
-            master_playlist_content += (
-                f'#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="{audio_group_id}",'
-                f'NAME="{track_info["name"]}",DEFAULT={default_flag},AUTOSELECT={autoselect_flag},'
-                f'LANGUAGE="{lang_code}"\n' # URI is omitted because audio is muxed into video segments
-            )
-        else:
-            # This case should be rare if active_langs is correct
-            logging.warning(f"Details not found for active language '{lang_code}' in AUDIO_TRACK_DETAILS during master playlist creation. Skipping its EXT-X-MEDIA tag.")
 
-    # Generate EXT-X-STREAM-INF tags for each video resolution/variant
-    # Sort by bandwidth (lowest first) - good practice for players
-    resolution_details_for_master.sort(key=lambda x: x['bandwidth'])
+def get_video_status(video_id):
+    """Gets the status of a video."""
+    with status_lock:
+        return video_processing_status.get(video_id, {"status": "not_found", "error": None, "qualities_done": []})
 
-    for detail in resolution_details_for_master:
-         codecs_str = f'CODECS="{detail["codecs"]}"'
-         # Resolution format: WIDTHxHEIGHT - We only have height, use placeholder width or omit if player handles it
-         # Using heightxheight as placeholder:
-         resolution_str = f'RESOLUTION={detail["height"]}x{detail["height"]}'
-         # Alternative: Omit RESOLUTION if player determines it from video stream
-         # resolution_str = "" # Uncomment to omit
+# === Background Processing Task ===
 
-         master_playlist_content += (
-             f'#EXT-X-STREAM-INF:BANDWIDTH={detail["bandwidth"]},'
-             # f'AVERAGE-BANDWIDTH={int(detail["bandwidth"]*0.9)},' # Optional hint
-             f'{codecs_str},{resolution_str},AUDIO="{audio_group_id}"\n' # Link to the audio group
-         )
-         master_playlist_content += f'{detail["playlist_path"]}\n' # Path to the resolution-specific playlist
+def process_video_distributed(video_id, source_filepath):
+    """
+    Manages the distributed video processing workflow in a background thread.
+    1. Calls converters.
+    2. Polls for completion.
+    3. Collects HLS files.
+    4. Creates master manifest.
+    """
+    thread_name = threading.current_thread().name
+    logging.info(f"[{thread_name}] Starting distributed processing for video_id: {video_id}")
+    update_video_status(video_id, status="processing_distribution")
 
-    # Write the generated master playlist to file
-    master_playlist_path = os.path.join(output_base_dir, MASTER_PLAYLIST_NAME)
+    # Ensure target HLS directory exists for this video
+    video_hls_dir = os.path.join(HLS_DIR, video_id)
+    ensure_dir(video_hls_dir)
+
+    # 1. Trigger conversion on each server
+    # Use the main server's external URL for converters to download the source
+    # Note: This assumes the main server is reachable from converters.
+    # If running locally, 'localhost' might work, but in production, use the actual IP/domain.
     try:
-        with open(master_playlist_path, 'w', encoding='utf-8') as f: # Specify encoding
-            f.write(master_playlist_content)
-        logging.info(f"Master playlist created successfully at {master_playlist_path}")
-
-        # Create the HLS ready marker file upon successful completion
-        with open(HLS_READY_FILE, 'w') as f:
-             f.write(time.strftime("%Y-%m-%d %H:%M:%S"))
-        logging.info("HLS processing complete. Ready marker created.")
-        end_time_total = time.time()
-        logging.info(f"Total transcoding job time: {end_time_total - start_time_total:.2f}s")
-        return True # Indicate success
-    except IOError as e:
-        error_msg = f"Failed to write master playlist or ready marker: {e}"
-        logging.error(error_msg)
-        with open(PROCESSING_ERROR_FILE, 'a') as f: f.write("\n" + error_msg + "\n")
-        return False # Indicate failure
-
-
-def run_processing_job():
-    """The main job function to download and transcode, run in a background thread."""
-    global ACTIVE_AUDIO_LANGS # Allow modification by download_all_videos
-
-    # Prevent multiple simultaneous runs using lock file
-    if os.path.exists(PROCESSING_LOCK_FILE):
-        logging.warning("Lock file found. Processing might be running, finished, or failed previously.")
-        # If HLS is ready, nothing more to do
-        if os.path.exists(HLS_READY_FILE):
-             logging.info("HLS already ready, existing lock file found. Exiting processing thread.")
-             return
-        # If lock exists but not ready, assume another process is active or failed. Don't start again.
-        logging.warning("HLS not ready, but lock file exists. Assuming another process is active or failed previously. Exiting thread.")
-        return
-
-    logging.info("Starting video processing job...")
-    job_start_time = time.time()
-    try:
-        # Create lock file immediately to signal start
-        ensure_dir(BASE_DIR) # Ensure base directory exists
-        with open(PROCESSING_LOCK_FILE, 'w') as f:
-            f.write(f'Processing started at: {time.strftime("%Y-%m-%d %H:%M:%S")}')
-        logging.info(f"Created processing lock file: {PROCESSING_LOCK_FILE}")
-
-        # Clear previous error file only if lock was just created (i.e., starting fresh)
-        if os.path.exists(PROCESSING_ERROR_FILE):
-            logging.warning("Removing previous error file before starting new job.")
-            try: os.remove(PROCESSING_ERROR_FILE)
-            except OSError as e: logging.error(f"Could not remove previous error file: {e}")
-
-        # Ensure necessary directories exist
-        ensure_dir(STATIC_DIR)
-        ensure_dir(HLS_DIR)
-        ensure_dir(DOWNLOAD_DIR)
-
-        # --- Step 1: Check Prerequisites (ffmpeg, ffprobe) ---
-        if not check_ffmpeg_tools():
-            logging.error("ffmpeg/ffprobe check failed. Aborting processing.")
-            # Error file written by check_ffmpeg_tools. Lock file remains to indicate failed state.
-            return # Stop processing
-
-        # --- Step 2: Download all source files ---
-        logging.info("=== Starting Download Phase ===")
-        if not download_all_videos(DOWNLOAD_TARGETS, DOWNLOAD_DIR):
-            logging.error("Download step failed for one or more critical files. Aborting processing.")
-            # Error file should contain details. Lock file remains.
-            return # Stop processing
-        logging.info("=== Download Phase Complete ===")
-
-
-        # --- Step 3: Transcode to HLS ---
-        logging.info("=== Starting Transcoding Phase ===")
-        # ACTIVE_AUDIO_LANGS should be correctly set by download_all_videos now
-        if not transcode_to_hls(DOWNLOAD_TARGETS, DOWNLOAD_DIR, HLS_DIR, RESOLUTIONS, ACTIVE_AUDIO_LANGS):
-            logging.error("Transcoding step failed.")
-            # Error file should contain details. Lock file remains.
-            return # Stop processing
-        logging.info("=== Transcoding Phase Complete ===")
-
-
-        # --- Success ---
-        job_end_time = time.time()
-        logging.info(f"Processing job completed successfully in {job_end_time - job_start_time:.2f} seconds.")
-        # Both HLS_READY_FILE and PROCESSING_LOCK_FILE exist, indicating successful completion.
-
+        # Get the hostname/IP Flask is running on (might need configuration in production)
+        server_name = request.host.split(':')[0] # Gets 'localhost' or IP/domain from request
+        server_port = request.host.split(':')[1] if ':' in request.host else 5000 # Default Flask port if not specified
+        # Ensure scheme (http/https)
+        scheme = request.scheme
+        source_download_url = f"{scheme}://{server_name}:{server_port}{url_for('download_source_video', video_id=video_id)}"
+        logging.info(f"[{thread_name}] Source download URL for converters: {source_download_url}")
     except Exception as e:
-        # Catch any unexpected critical errors during the job sequence
-        error_msg = f"CRITICAL UNEXPECTED ERROR in processing job: {e}"
-        logging.error(error_msg, exc_info=True)
-        try:
-            # Ensure this critical error is logged to the file
-            with open(PROCESSING_ERROR_FILE, 'a') as f: f.write(f"\n--- Critical Job Failure ---\n{error_msg}\n")
-        except IOError as io_err:
-            logging.error(f"Failed to write critical job error to file: {io_err}")
-        # Keep lock file to indicate failure state.
+        logging.error(f"[{thread_name}] Failed to generate source download URL: {e}. Trying fallback.")
+        # Fallback (adjust if needed, e.g., read from config)
+        source_download_url = f"http://127.0.0.1:5000/download_source/{video_id}"
+        logging.warning(f"[{thread_name}] Using fallback source URL: {source_download_url}")
 
-    # finally:
-        # Current logic keeps the lock file regardless of success or failure.
-        # Status check logic in index() route uses combination of lock, ready, and error files.
+
+    conversion_jobs = {}
+    active_converters = {}
+
+    for quality, base_url in CONVERTER_SERVERS.items():
+        converter_url = f"{base_url}/convert"
+        payload = {
+            "video_id": video_id,
+            "source_url": source_download_url,
+            "target_height": RESOLUTIONS[quality][0],
+            "video_bitrate": RESOLUTIONS[quality][1],
+            "audio_bitrate": RESOLUTIONS[quality][2],
+            "timeout": FFMPEG_TIMEOUT
+        }
+        try:
+            response = requests.post(converter_url, json=payload, timeout=15) # Short timeout for triggering
+            response.raise_for_status()
+            result = response.json()
+            if result.get("status") == "processing_started":
+                logging.info(f"[{thread_name}] Successfully triggered conversion for {quality} on {base_url}")
+                conversion_jobs[quality] = "pending"
+                active_converters[quality] = base_url
+            else:
+                logging.error(f"[{thread_name}] Failed to start conversion for {quality} on {base_url}: {result.get('error', 'Unknown error')}")
+                update_video_status(video_id, status="error", error=f"Failed to start {quality}: {result.get('error', 'Unknown')}")
+                conversion_jobs[quality] = "failed_to_start"
+
+        except requests.exceptions.RequestException as e:
+            logging.error(f"[{thread_name}] Error contacting converter {base_url} for {quality}: {e}")
+            update_video_status(video_id, status="error", error=f"Error contacting {quality} converter: {e}")
+            conversion_jobs[quality] = "failed_to_start"
+
+    if not active_converters:
+         logging.error(f"[{thread_name}] No converters started successfully for {video_id}. Aborting.")
+         update_video_status(video_id, status="error", error="No conversion jobs could be started.")
+         # Clean up original upload file? Optional.
+         # try: os.remove(source_filepath) except OSError: pass
+         return
+
+
+    # 2. Poll for completion
+    update_video_status(video_id, status="processing_polling")
+    polling_interval = 15 # seconds
+    max_polling_time = FFMPEG_TIMEOUT + 600 # Allow extra time beyond ffmpeg timeout
+    start_polling_time = time.time()
+
+    qualities_to_monitor = list(active_converters.keys())
+    completed_qualities = []
+    failed_qualities = []
+
+    while qualities_to_monitor:
+        if time.time() - start_polling_time > max_polling_time:
+            timeout_error = f"Polling timed out after {max_polling_time}s for qualities: {qualities_to_monitor}"
+            logging.error(f"[{thread_name}] {timeout_error}")
+            for q in qualities_to_monitor: failed_qualities.append(q)
+            update_video_status(video_id, status="error", error=timeout_error)
+            break # Exit polling loop
+
+        quality_to_check = qualities_to_monitor.pop(0) # Process one by one
+        base_url = active_converters[quality_to_check]
+        status_url = f"{base_url}/status/{video_id}"
+
+        try:
+            response = requests.get(status_url, timeout=10)
+            response.raise_for_status()
+            result = response.json()
+            current_status = result.get("status")
+            logging.debug(f"[{thread_name}] Status check for {quality_to_check} ({video_id}): {current_status}")
+
+            if current_status == "completed":
+                logging.info(f"[{thread_name}] Conversion completed for {quality_to_check} ({video_id})")
+                completed_qualities.append(quality_to_check)
+                update_video_status(video_id, quality_done=quality_to_check) # Mark this quality as done
+            elif current_status == "error":
+                error_msg = result.get("error", "Unknown error from converter")
+                logging.error(f"[{thread_name}] Conversion failed for {quality_to_check} ({video_id}): {error_msg}")
+                failed_qualities.append(quality_to_check)
+                update_video_status(video_id, status="error", error=f"{quality_to_check} failed: {error_msg}")
+            else: # Still processing or pending
+                qualities_to_monitor.append(quality_to_check) # Add back to the end of the queue
+
+        except requests.exceptions.RequestException as e:
+            logging.error(f"[{thread_name}] Error polling status for {quality_to_check} ({video_id}) from {base_url}: {e}")
+            # Decide if this is a fatal error for this quality or retry
+            # For simplicity, let's count it as a failure after one error
+            failed_qualities.append(quality_to_check)
+            update_video_status(video_id, status="error", error=f"Error polling {quality_to_check}: {e}")
+
+
+        # Wait before next check, only if there are still items to monitor
+        if qualities_to_monitor:
+            time.sleep(polling_interval)
+
+    # Check results
+    if not completed_qualities:
+         logging.error(f"[{thread_name}] No qualities completed successfully for {video_id}.")
+         # Status already set to error if polling timed out or individual qualities failed
+         if get_video_status(video_id)['status'] != "error":
+             update_video_status(video_id, status="error", error="No qualities finished successfully.")
+         # Clean up original upload file? Optional.
+         # try: os.remove(source_filepath) except OSError: pass
+         return
+
+    logging.info(f"[{thread_name}] Completed qualities for {video_id}: {completed_qualities}")
+    logging.warning(f"[{thread_name}] Failed qualities for {video_id}: {failed_qualities}")
+
+    # 3. Collect HLS files for completed qualities
+    update_video_status(video_id, status="processing_collecting")
+    collected_manifests = {} # quality -> relative_path
+
+    for quality in completed_qualities:
+        base_url = active_converters[quality]
+        files_list_url = f"{base_url}/files/{video_id}" # Endpoint to list files
+        quality_hls_dir = os.path.join(video_hls_dir, quality)
+        ensure_dir(quality_hls_dir)
+
+        try:
+            # Get the list of files from the converter
+            response = requests.get(files_list_url, timeout=15)
+            response.raise_for_status()
+            files_to_download = response.json().get("files", [])
+            logging.info(f"[{thread_name}] Files to download for {quality}: {files_to_download}")
+
+            if not files_to_download:
+                 logging.warning(f"[{thread_name}] Converter for {quality} reported completion, but returned no files.")
+                 update_video_status(video_id, status="error", error=f"No files returned by {quality} converter after completion.")
+                 continue # Skip this quality
+
+
+            playlist_filename = None
+            for filename in files_to_download:
+                if filename.endswith(".m3u8"):
+                    playlist_filename = filename
+
+                download_url = f"{base_url}/files/{video_id}/{filename}"
+                local_filepath = os.path.join(quality_hls_dir, filename)
+
+                try:
+                    with requests.get(download_url, stream=True, timeout=60) as r:
+                        r.raise_for_status()
+                        with open(local_filepath, 'wb') as f:
+                            for chunk in r.iter_content(chunk_size=8192):
+                                f.write(chunk)
+                    logging.debug(f"[{thread_name}] Downloaded {filename} for {quality} to {local_filepath}")
+                except requests.exceptions.RequestException as e_dl:
+                    logging.error(f"[{thread_name}] Failed to download {filename} for {quality} from {base_url}: {e_dl}")
+                    update_video_status(video_id, status="error", error=f"Failed to download {filename} for {quality}: {e_dl}")
+                    # Should we stop collecting for this quality? Yes.
+                    collected_manifests.pop(quality, None) # Remove if partially added
+                    # Clean up partially downloaded files for this quality
+                    try:
+                        shutil.rmtree(quality_hls_dir)
+                        logging.info(f"Removed partially collected directory: {quality_hls_dir}")
+                    except OSError as e_rm:
+                         logging.warning(f"Could not remove partial dir {quality_hls_dir}: {e_rm}")
+                    break # Stop collecting for this quality
+
+
+            # If download succeeded for all files in the list and we found a playlist
+            if playlist_filename and quality not in get_video_status(video_id).get('error', ''): # Check if an error occurred during download loop
+                 relative_playlist_path = f"{quality}/{playlist_filename}" # Path relative to video_id dir
+                 collected_manifests[quality] = relative_playlist_path
+                 logging.info(f"[{thread_name}] Successfully collected files for {quality}. Manifest: {relative_playlist_path}")
+
+
+        except requests.exceptions.RequestException as e_list:
+            logging.error(f"[{thread_name}] Failed to list files for {quality} from {base_url}: {e_list}")
+            update_video_status(video_id, status="error", error=f"Failed to list files from {quality} converter: {e_list}")
+
+
+    # Check if we collected anything useful
+    if not collected_manifests:
+         logging.error(f"[{thread_name}] Failed to collect any valid HLS playlists for {video_id}.")
+         if get_video_status(video_id)['status'] != "error":
+            update_video_status(video_id, status="error", error="Failed to collect any HLS playlists.")
+         # Clean up original upload file? Optional.
+         # try: os.remove(source_filepath) except OSError: pass
+         return
+
+    # 4. Create Master Manifest
+    update_video_status(video_id, status="processing_manifest")
+    master_playlist_content = ["#EXTM3U", "#EXT-X-VERSION:3"]
+    # Sort qualities for consistent master playlist order (e.g., by height)
+    sorted_qualities = sorted(collected_manifests.keys(), key=lambda q: RESOLUTIONS[q][0])
+
+    for quality in sorted_qualities:
+        resolution_info = RESOLUTIONS[quality]
+        height = resolution_info[0]
+        bandwidth = int(resolution_info[1].replace('k','000')) # Estimate bandwidth from video bitrate
+        playlist_path = collected_manifests[quality]
+
+        master_playlist_content.append(f'#EXT-X-STREAM-INF:BANDWIDTH={bandwidth},RESOLUTION={height}x{height},NAME="{quality}"') # Assuming square pixels for simplicity
+        master_playlist_content.append(playlist_path)
+
+    master_playlist_path = os.path.join(video_hls_dir, "master.m3u8")
+    try:
+        with open(master_playlist_path, "w") as f:
+            f.write("\n".join(master_playlist_content) + "\n")
+        logging.info(f"[{thread_name}] Created master playlist for {video_id} at {master_playlist_path}")
+
+        # 5. Final Status Update & Cleanup
+        relative_master_path = f"{video_id}/master.m3u8"
+        update_video_status(video_id, status="ready", manifest_path=relative_master_path)
+        logging.info(f"[{thread_name}] Video processing completed successfully for {video_id}!")
+
+        # Clean up the original uploaded file
+        try:
+            os.remove(source_filepath)
+            logging.info(f"[{thread_name}] Removed original source file: {source_filepath}")
+        except OSError as e:
+            logging.warning(f"[{thread_name}] Could not remove source file {source_filepath}: {e}")
+
+    except IOError as e:
+        logging.error(f"[{thread_name}] Failed to write master playlist {master_playlist_path}: {e}")
+        update_video_status(video_id, status="error", error=f"Failed to write master playlist: {e}")
 
 
 # === Flask Routes ===
 
+@app.route('/upload', methods=['GET', 'POST'])
+def upload_video():
+    if request.method == 'POST':
+        if 'video' not in request.files:
+            logging.warning("Upload attempt with no 'video' file part.")
+            return jsonify({"success": False, "error": "No video file part in the request."}), 400
+
+        file = request.files['video']
+        if file.filename == '':
+            logging.warning("Upload attempt with no selected file.")
+            return jsonify({"success": False, "error": "No selected file."}), 400
+
+        if file: # Check if file exists and has a name
+            try:
+                video_id = str(uuid.uuid4())
+                ensure_dir(UPLOAD_DIR)
+                # Sanitize filename basic - consider more robust sanitization
+                # filename = secure_filename(file.filename) # Need Werkzeug for this
+                # For simplicity, just use video_id
+                _, ext = os.path.splitext(file.filename)
+                save_filename = f"{video_id}{ext}"
+                save_path = os.path.join(UPLOAD_DIR, save_filename)
+
+                file.save(save_path)
+                logging.info(f"Video uploaded successfully: {save_path} (ID: {video_id})")
+
+                # Initialize status
+                update_video_status(video_id, status="uploaded")
+
+                # Start background processing
+                processing_thread = threading.Thread(
+                    target=process_video_distributed,
+                    args=(video_id, save_path),
+                    name=f"Processor-{video_id[:8]}" # Short thread name
+                )
+                processing_thread.start()
+
+                return jsonify({"success": True, "video_id": video_id})
+
+            except Exception as e:
+                 # Catch potential errors during save or thread start
+                 logging.error(f"Error during file upload or processing start: {e}", exc_info=True)
+                 # Clean up uploaded file if it exists and something went wrong
+                 if 'save_path' in locals() and os.path.exists(save_path):
+                     try: os.remove(save_path)
+                     except OSError: pass
+                 # Clean up status entry if created
+                 if 'video_id' in locals():
+                     with status_lock: video_processing_status.pop(video_id, None)
+                     save_status()
+                 return jsonify({"success": False, "error": f"An internal error occurred: {e}"}), 500
+        else:
+             return jsonify({"success": False, "error": "Invalid file."}), 400
+
+    # GET request: Show the upload form
+    return render_template('upload.html')
+
+
+@app.route('/download_source/<video_id>')
+def download_source_video(video_id):
+    """Allows converter servers to download the original uploaded video."""
+    status_info = get_video_status(video_id)
+    if status_info['status'] == 'not_found':
+        abort(404, description="Video ID not found.")
+
+    # Find the source file (assuming it has the video_id as basename)
+    source_file = None
+    try:
+        for filename in os.listdir(UPLOAD_DIR):
+            if filename.startswith(video_id):
+                source_file = os.path.join(UPLOAD_DIR, filename)
+                break
+    except FileNotFoundError:
+         logging.error(f"Upload directory {UPLOAD_DIR} not found when trying to serve source for {video_id}")
+         abort(500, description="Server configuration error (upload dir missing).")
+
+    if source_file and os.path.exists(source_file):
+        logging.info(f"Serving source video {source_file} for download request (video_id: {video_id})")
+        return send_from_directory(UPLOAD_DIR, os.path.basename(source_file), as_attachment=False) # Serve inline
+    else:
+        logging.warning(f"Source file for video_id {video_id} not found in {UPLOAD_DIR}")
+        abort(404, description="Source video file not found or already processed.")
+
+@app.route('/status/<video_id>')
+def check_video_status(video_id):
+    """API endpoint for the frontend to check video status."""
+    status_info = get_video_status(video_id)
+    return jsonify(status_info)
+
+@app.route('/watch/<video_id>')
+def watch_video(video_id):
+    """Displays the video player page."""
+    status_info = get_video_status(video_id)
+    status = status_info.get("status", "not_found")
+    error = status_info.get("error")
+    hls_ready = (status == "ready")
+    processing = status not in ["ready", "error", "not_found"]
+    master_playlist_url = None
+    if hls_ready and status_info.get("manifest_path"):
+         master_playlist_url = url_for('serve_hls', video_id=video_id, filename='master.m3u8')
+         # Note: The template needs modification to use master_playlist_url
+
+    # Reuse index.html structure but pass necessary variables
+    # You might want to create a dedicated watch.html template
+    return render_template('index.html', # Or 'watch.html' if you create it
+                           hls_ready=hls_ready,
+                           processing=processing,
+                           error=error,
+                           video_id=video_id,
+                           master_playlist_url=master_playlist_url # Pass this to template
+                           )
+
+
+@app.route('/hls/<video_id>/<path:filename>')
+def serve_hls(video_id, filename):
+    """Serves the master playlist and video segments."""
+    video_hls_path = os.path.join(HLS_DIR, video_id)
+    if not os.path.exists(video_hls_path):
+         logging.warning(f"Attempt to access non-existent HLS path: {video_hls_path}")
+         abort(404)
+
+    logging.debug(f"Serving HLS file: {filename} from {video_hls_path}")
+    try:
+        # Important: Set correct MIME types
+        if filename.endswith('.m3u8'):
+            mime_type = 'application/vnd.apple.mpegurl'
+        elif filename.endswith('.ts'):
+            mime_type = 'video/mp2t'
+        else:
+            mime_type = None # Let Flask guess or default
+
+        response = send_from_directory(video_hls_path, filename, mimetype=mime_type)
+        # Add CORS headers if needed, especially if player is on a different domain
+        # response.headers.add('Access-Control-Allow-Origin', '*')
+        return response
+
+    except FileNotFoundError:
+        logging.warning(f"HLS file not found: {filename} in {video_hls_path}")
+        abort(404)
+    except Exception as e:
+         logging.error(f"Error serving HLS file {filename} for {video_id}: {e}", exc_info=True)
+         abort(500)
+
+
 @app.route('/')
 def index():
-    """Serves the main HTML page displaying status and video player."""
-    error_message = None
-    is_processing = False
-    is_hls_ready = os.path.exists(HLS_READY_FILE)
-    processing_status_message = "Initializing..." # Default message
-
-    # Check for errors first
-    if os.path.exists(PROCESSING_ERROR_FILE):
-        try:
-            with open(PROCESSING_ERROR_FILE, 'r', encoding='utf-8') as f:
-                error_message = f.read().strip()
-            if error_message:
-                 logging.warning(f"Found error file with content: {PROCESSING_ERROR_FILE}")
-                 is_hls_ready = False # Cannot be ready if error occurred
-                 is_processing = False # Processing stopped due to error
-                 processing_status_message = "Error Occurred"
-            else:
-                 # Error file exists but is empty, might be leftover, ignore for now
-                 error_message = None # Treat as no error
-                 logging.warning(f"Found empty error file: {PROCESSING_ERROR_FILE}, ignoring.")
-
-        except Exception as e:
-            error_message = f"Could not read error file ({PROCESSING_ERROR_FILE}): {e}"
-            logging.error(error_message)
-            is_hls_ready = False
-            is_processing = False
-
-    # If no error, check HLS status
-    if not error_message:
-        if is_hls_ready:
-            is_processing = False # If ready, it's not processing
-            processing_status_message = "Ready"
-        elif os.path.exists(PROCESSING_LOCK_FILE):
-            is_processing = True # Lock exists, HLS not ready -> Processing
-            processing_status_message = "Processing"
-        else:
-            # No lock, not ready, no error -> Should initiate processing
-            is_processing = False # Not currently processing, but should start
-            processing_status_message = "Idle / Starting"
-            # Attempt to start the background thread if it's not running
-            if not (processing_thread and processing_thread.is_alive()):
-                 logging.warning("State: Idle/Not Ready. Attempting to start processing thread.")
-                 start_processing_thread()
-                 # Check if lock file appeared immediately after starting
-                 if os.path.exists(PROCESSING_LOCK_FILE):
-                      is_processing = True # Set state to processing for the UI
-                      processing_status_message = "Processing (Just Started)"
-                 else:
-                      # Unusual state, thread started but lock not created instantly?
-                      logging.warning("Attempted to start thread, but lock file did not appear immediately.")
-                      # Keep is_processing false for now, UI will show Idle/Starting
-            else:
-                 # Thread is alive, but no lock and not ready? Inconsistent state.
-                 logging.error("Inconsistent State: Processing thread alive, but no lock file and HLS not ready.")
-                 error_message = "Server state is inconsistent (Thread active, no lock). Please check logs."
-                 processing_status_message = "Inconsistent State"
+    # Redirect to upload page or show a dashboard
+    return redirect(url_for('upload_video'))
 
 
-    logging.info(f"Rendering index: Status='{processing_status_message}', HLS Ready={is_hls_ready}, Processing={is_processing}, Error Present={bool(error_message)}")
-    return render_template('index.html',
-                           hls_ready=is_hls_ready,
-                           processing=is_processing,
-                           error=error_message)
-
-@app.route('/hls/<path:filename>')
-def serve_hls_files(filename):
-    """Serves HLS playlist and segment files (.m3u8, .ts) from the HLS directory structure."""
-    hls_directory = HLS_DIR
-    # Sanitize filename path to prevent directory traversal
-    if '..' in filename or filename.startswith('/'):
-        logging.warning(f"Directory traversal attempt blocked for HLS file: {filename}")
-        abort(403) # Forbidden
-
-    logging.debug(f"Request for HLS file: {filename} within {hls_directory}")
-    try:
-        # send_from_directory handles the full path construction and security checks
-        return send_from_directory(hls_directory, filename, conditional=True) # Enable caching headers
-    except FileNotFoundError:
-        logging.warning(f"HLS file not found: {os.path.join(hls_directory, filename)}")
-        abort(404) # Not Found
-    except Exception as e:
-        # Catch potential errors like permission issues
-        logging.error(f"Error serving HLS file {filename}: {e}", exc_info=True)
-        abort(500) # Internal Server Error
-
-
-# === Application Startup & Background Thread ===
-processing_thread = None
-
-def start_processing_thread():
-    """Starts the video processing in a background thread if conditions are met."""
-    global processing_thread
-
-    # Condition 1: Don't start if already running
-    if processing_thread and processing_thread.is_alive():
-        logging.info("Processing thread is already running.")
-        return
-
-    # Condition 2: Don't start if HLS is already successfully generated
-    if os.path.exists(HLS_READY_FILE):
-        logging.info("HLS already ready. No need to start processing thread.")
-        return
-
-    # Condition 3: Don't start if lock file exists (means running or failed)
-    # Let the existing lock prevent a new start until manually cleared if failed.
-    if os.path.exists(PROCESSING_LOCK_FILE):
-         logging.warning("Lock file exists, but HLS not ready. Not starting new thread (might be running or failed previously).")
-         return
-
-    # Condition 4: Don't automatically restart if a previous error occurred (requires manual intervention)
-    if os.path.exists(PROCESSING_ERROR_FILE) and os.path.getsize(PROCESSING_ERROR_FILE) > 0:
-        logging.warning("Error file exists, indicating a previous failure. Manual intervention (e.g., clearing .processing.error and .processing.lock) might be required to retry. Not starting thread automatically.")
-        return
-
-    # All conditions met: Start the background processing thread
-    logging.info("Starting background processing thread...")
-    processing_thread = threading.Thread(target=run_processing_job, name="ProcessingThread", daemon=True)
-    processing_thread.start()
-
-def initial_start():
-    """Function to initiate the first check/start of the processing thread."""
-    logging.info("Application starting up. Attempting to initiate processing if needed.")
-    start_processing_thread()
-
-# --- Ensure processing starts/checks when the application boots ---
-# Run this after app is defined and before app.run()
-initial_start()
-
-
-# === Main Execution Block ===
+# === Initialization ===
 if __name__ == '__main__':
-    # Use 0.0.0.0 to be accessible externally (like on Replit/Cloud Run)
-    # Use a suitable port (e.g., 8000, 8080)
-    # Set debug=False for production or when using background threads, as debug mode can interfere.
-    app.run(host='0.0.0.0', port=8000, debug=False)
-    
+    ensure_dir(UPLOAD_DIR)
+    ensure_dir(HLS_DIR)
+    load_status() # Load existing status on startup
+    # Use host='0.0.0.0' to make it accessible on the network
+    app.run(debug=True, host='0.0.0.0', port=5000, threaded=True) # Threaded required for background tasks
