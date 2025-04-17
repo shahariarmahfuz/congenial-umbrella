@@ -1,3 +1,4 @@
+# app.py
 import os
 import subprocess
 import requests
@@ -19,11 +20,11 @@ app = Flask(__name__)
 
 # === Configuration Constants ===
 # মূল ভিডিও URL (ধরে নিলাম এতে ইংরেজি অডিও আছে - অনুগ্রহ করে আসল URL ব্যবহার করুন)
-# *** গুরুত্বপূর্ণ: নিচের URL গুলো আপনার হিন্দি এবং জাপানিজ অডিওসহ ভিডিওর সঠিক URL দিয়ে প্রতিস্থাপন করুন ***
-VIDEO_URL = "https://video-mxp1-1.xx.fbcdn.net/o1/v/t2/f2/m69/AQM8S3pFxa70tno6zop7jYr1U16B60EHmFPInE6TGBwoOaJnQOXYtCml3Qkpv-p01h-Mq8WY8cuwf4HDp-EFVkCJ.mp4?strext=1&_nc_cat=103&_nc_sid=5e9851&_nc_ht=video-mxp1-1.xx.fbcdn.net&_nc_ohc=PsDTzb3w2UsQ7kNvwEdobVT&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5GQUNFQk9PSy4uQzMuNzIwLmRhc2hfaDI2NC1iYXNpYy1nZW4yXzcyMHAiLCJ4cHZfYXNzZXRfaWQiOjE0MDc5NDYzMjM1NTI4NTksInZpX3VzZWNhc2VfaWQiOjEwMTIyLCJkdXJhdGlvbl9zIjoyMDAsInVybGdlbl9zb3VyY2UiOiJ3d3cifQ%3D%3D&ccb=17-1&vs=f2a9875f9f41aa3d&_nc_vs=HBksFQIYOnBhc3N0aHJvdWdoX2V2ZXJzdG9yZS9HTmhqVUIzRVlmM3FMbU1DQVBzVVd5WFBEaXNHYm1kakFBQUYVAALIAQAVAhg6cGFzc3Rocm91Z2hfZXZlcnN0b3JlL0dJTkhVaDB6TFExRGFSOEZBR2tockdVaUNUdEdickZxQUFBRhUCAsgBACgAGAAbAogHdXNlX29pbAExEnByb2dyZXNzaXZlX3JlY2lwZQExFQAAJrap08ehoYAFFQIoAkMzLBdAaRiLQ5WBBhgZZGFzaF9oMjY0LWJhc2ljLWdlbjJfNzIwcBEAdQIA&_nc_zt=28&oh=00_AfEkU99vSfDRfVji51klRkyvAj5hml5FUlj3hFYozoLfGg&oe=68056F07&dl=1" # <--- এখানে সঠিক URL দিন
+VIDEO_URL = "https://video-mxp1-1.xx.fbcdn.net/o1/v/t2/f2/m69/AQM8S3pFxa70tno6zop7jYr1U16B60EHmFPInE6TGBwoOaJnQOXYtCml3Qkpv-p01h-Mq8WY8cuwf4HDp-EFVkCJ.mp4?strext=1&_nc_cat=103&_nc_sid=5e9851&_nc_ht=video-mxp1-1.xx.fbcdn.net&_nc_ohc=PsDTzb3w2UsQ7kNvwEdobVT&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5GQUNFQk9PSy4uQzMuNzIwLmRhc2hfaDI2NC1iYXNpYy1nZW4yXzcyMHAiLCJ4cHZfYXNzZXRfaWQiOjE0MDc5NDYzMjM1NTI4NTksInZpX3VzZWNhc2VfaWQiOjEwMTIyLCJkdXJhdGlvbl9zIjoyMDAsInVybGdlbl9zb3VyY2UiOiJ3d3cifQ%3D%3D&ccb=17-1&vs=f2a9875f9f41aa3d&_nc_vs=HBksFQIYOnBhc3N0aHJvdWdoX2V2ZXJzdG9yZS9HTmhqVUIzRVlmM3FMbU1DQVBzVVd5WFBEaXNHYm1kakFBQUYVAALIAQAVAhg6cGFzc3Rocm91Z2hfZXZlcnN0b3JlL0dJTkhVaDB6TFExRGFSOEZBR2tockdVaUNUdEdickZxQUFBRhUCAsgBACgAGAAbAogHdXNlX29pbAExEnByb2dyZXNzaXZlX3JlY2lwZQExFQAAJrap08ehoYAFFQIoAkMzLBdAaRiLQ5WBBhgZZGFzaF9oMjY0LWJhc2ljLWdlbjJfNzIwcBEAdQIA&_nc_zt=28&oh=00_AfEkU99vSfDRfVji51klRkyvAj5hml5FUlj3hFYozoLfGg&oe=68056F07&dl=1"
 DOWNLOADED_FILENAME_BASE = "source_video" # ফাইলের নামের ভিত্তি
 
 # অতিরিক্ত অডিও ট্র্যাকের সোর্স (ভাষা কোড -> {url, filename})
+# *** গুরুত্বপূর্ণ: নিচের URL গুলো আপনার হিন্দি এবং জাপানিজ অডিওসহ ভিডিওর সঠিক URL দিয়ে প্রতিস্থাপন করুন ***
 ADDITIONAL_AUDIO_SOURCES = {
     "hin": { # হিন্দি অডিওর জন্য
         "url": "https://video-lga3-1.xx.fbcdn.net/o1/v/t2/f2/m69/AQPMl8zJMnuo69uJZ2Vb5qA0zubB50NBwQXYxVaWgl5EhRxQerzsJsMZe-GK2ko7yKxeHwS9B41kbp0pAle1oSYE.mp4?strext=1&_nc_cat=108&_nc_sid=8bf8fe&_nc_ht=video-lga3-1.xx.fbcdn.net&_nc_ohc=xzuPd_k2hp8Q7kNvwH2ar5R&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5GQUNFQk9PSy4uQzMuMzYwLnN2ZV9zZCIsInhwdl9hc3NldF9pZCI6MTA4Mjk0NzQ0Njg5MzYwMywidmlfdXNlY2FzZV9pZCI6MTAxMjIsImR1cmF0aW9uX3MiOjI0OSwidXJsZ2VuX3NvdXJjZSI6Ind3dyJ9&ccb=17-1&_nc_zt=28&oh=00_AfGvELNyDQqknfjjIeWGbpzBKq-JJG_xJSv1CM10lxqDMQ&oe=68064F92&dl=1", # <--- এখানে সঠিক URL দিন
@@ -284,27 +285,24 @@ def download_all_videos(target_dict, download_dir):
     """Downloads all necessary video files specified in target_dict."""
     global ACTIVE_AUDIO_LANGS # Allow modification based on success/failure
     ensure_dir(download_dir)
-    active_langs_on_entry = list(DOWNLOAD_TARGETS.keys()) # Use initial config keys
+    active_langs_on_entry = list(ACTIVE_AUDIO_LANGS) # Keep track of initial list
 
     if os.path.exists(ALL_DOWNLOADS_COMPLETE_MARKER):
         logging.info("Overall download marker found. Verifying individual files...")
         all_files_ok = True
         missing_or_empty_files = []
-        verified_langs = [] # Track successfully verified languages
         for lang_code in active_langs_on_entry:
             details = target_dict.get(lang_code)
             if not details: continue # Should not happen if active_langs is correct
             path = os.path.join(download_dir, details['filename'])
-            if os.path.exists(path) and os.path.getsize(path) > 0:
-                 verified_langs.append(lang_code) # Add to verified list
-            else:
+            if not os.path.exists(path) or os.path.getsize(path) == 0:
                 logging.warning(f"Marker exists, but file for '{lang_code}' ({path}) is missing or empty.")
                 all_files_ok = False
                 missing_or_empty_files.append(lang_code)
 
         if all_files_ok:
-            logging.info("All required files verified based on target list. Skipping download phase.")
-            ACTIVE_AUDIO_LANGS = verified_langs # Update global list to only verified ones
+            logging.info("All required files verified based on active list. Skipping download phase.")
+            ACTIVE_AUDIO_LANGS = active_langs_on_entry # Confirm the list
             return True
         else:
             logging.warning(f"Need to re-download or verify files for: {missing_or_empty_files}. Removing marker and starting download phase.")
@@ -337,7 +335,7 @@ def download_all_videos(target_dict, download_dir):
         dest_path = os.path.join(download_dir, filename)
 
         # Check for placeholder URLs
-        if not url or "আপনার_" in url or url.strip() == "" or "এখানে_সঠিক_URL_দিন" in url:
+        if not url or "আপনার_" in url or url.strip() == "":
              logging.warning(f"Skipping download for '{lang_code}': URL is missing or is a placeholder.")
              # Do not add to successful_langs, it won't be active
              continue
@@ -433,7 +431,6 @@ def transcode_to_hls(download_targets, download_dir, output_base_dir, resolution
     # Map first video stream from first input (0:v:0)
     map_commands.extend(['-map', '0:v:0'])
     # Map first audio stream from first input (0:a:0) - Assuming primary has audio
-    # **** Important Assumption: Primary video MUST have an audio track for this simple mapping ****
     map_commands.extend(['-map', '0:a:0'])
     # Add language metadata for this first output audio stream (index 0)
     audio_metadata_commands.extend([f'-metadata:s:a:{output_audio_stream_index}', f'language={primary_lang}'])
@@ -441,23 +438,20 @@ def transcode_to_hls(download_targets, download_dir, output_base_dir, resolution
 
     # Add other active language inputs and map their audio
     input_index = 1 # Start from 1 for subsequent -i inputs
-    skipped_langs = [] # Track skipped languages during transcoding setup
     for lang_code in active_langs:
         if lang_code == primary_lang:
             continue # Already processed primary
 
         details = download_targets[lang_code]
         path = os.path.join(download_dir, details['filename'])
-        # Basic file existence check (less robust than using ffprobe check)
+        # File existence should be guaranteed by download_all_videos if lang is active
         if not os.path.exists(path) or os.path.getsize(path) == 0:
              logging.warning(f"File for active language '{lang_code}' ({path}) missing or empty during transcoding setup. Skipping.")
-             skipped_langs.append(lang_code)
              continue
 
         input_files.extend(['-i', path])
         input_paths[lang_code] = path
         # Map the first audio stream from this input (input_index : a : 0)
-        # **** Important Assumption: Each additional file MUST have a valid audio track as its first audio stream ****
         map_commands.extend(['-map', f'{input_index}:a:0'])
         # Add language metadata for this output audio stream (index output_audio_stream_index)
         audio_metadata_commands.extend([f'-metadata:s:a:{output_audio_stream_index}', f'language={lang_code}'])
@@ -472,8 +466,7 @@ def transcode_to_hls(download_targets, download_dir, output_base_dir, resolution
          return False
 
     # Log the final setup
-    final_transcoding_langs = [lang for lang in active_langs if lang not in skipped_langs]
-    logging.info(f"Attempting HLS transcoding for {len(final_transcoding_langs)} languages: {final_transcoding_langs} from {len(input_files)//2} input files.")
+    logging.info(f"Starting HLS transcoding for {len(active_langs)} languages: {active_langs} from {len(input_files)//2} input files.")
     logging.info(f"Output duration limited to: {video_duration:.3f}s")
     logging.info(f"Mapping commands: {map_commands}")
     logging.info(f"Audio metadata commands: {audio_metadata_commands}")
@@ -521,50 +514,57 @@ def transcode_to_hls(download_targets, download_dir, output_base_dir, resolution
         cmd.append(absolute_playlist_path)      # Output playlist for this resolution
 
         logging.info(f"Running ffmpeg for {height}p (limited to {video_duration:.3f}s)...")
-        # logging.debug(f"Command: {' '.join(cmd)}") # Uncomment for full command log
+        logging.debug(f"Command: {' '.join(cmd)}")
+        start_time_res = time.time()
 
         try:
             # Run ffmpeg command
             result = subprocess.run(
-                cmd, check=True, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=FFMPEG_TIMEOUT
+                cmd, check=True, capture_output=True, text=True, timeout=FFMPEG_TIMEOUT
             )
             end_time_res = time.time()
             logging.info(f"ffmpeg finished successfully for {height}p in {end_time_res - start_time_res:.2f}s.")
-            # logging.debug(f"FFMPEG STDERR (Success {height}p):\n{result.stderr}") # Log stderr even on success
 
             # Store details for master playlist generation
+            # Calculate total bandwidth: video + (N * audio)
+            # Ensure a_bitrate string like '96k' is converted correctly
             audio_bitrate_numeric = int(a_bitrate[:-1]) * 1000
-            total_audio_bitrate = output_audio_stream_index * audio_bitrate_numeric # Use count based on initial mapping
+            total_audio_bitrate = output_audio_stream_index * audio_bitrate_numeric
             video_bitrate_numeric = int(v_bitrate[:-1]) * 1000
             total_bandwidth = video_bitrate_numeric + total_audio_bitrate
-            video_codec_str = "avc1.4D401F"; audio_codec_str = "mp4a.40.2" # Example codecs
+
+            # Determine codecs (Example: H.264 main + AAC audio) - Adjust if needed!
+            # This might need to be more dynamic if codecs change based on input/settings
+            # For typical web video:
+            video_codec_str = "avc1.4D401F" # Example H.264 Main profile level 3.1
+            audio_codec_str = "mp4a.40.2"  # Example AAC-LC
             combined_codecs = f'{video_codec_str},{audio_codec_str}'
 
             resolution_details_for_master.append({
-                'bandwidth': total_bandwidth, 'height': height,
-                'playlist_path': os.path.join(str(height), 'playlist.m3u8'),
+                'bandwidth': total_bandwidth,
+                'height': height,
+                'playlist_path': os.path.join(str(height), 'playlist.m3u8'), # Relative path
                 'codecs': combined_codecs
             })
 
         # Handle potential errors during ffmpeg execution
         except subprocess.CalledProcessError as e:
-            # Log more stderr on failure
-            error_msg = (f"Transcoding failed for {height}p (rc={e.returncode}).\n"
-                         f"CMD: {' '.join(e.cmd)}\n-- STDERR --\n{e.stderr}\n------------")
+            error_msg = (f"Transcoding failed for {height}p (ffmpeg exited with code {e.returncode}).\n"
+                         f"CMD: {' '.join(e.cmd)}\n"
+                         f"STDERR (last 1000 chars):\n...{e.stderr[-1000:]}")
             logging.error(error_msg)
             with open(PROCESSING_ERROR_FILE, 'a') as f: f.write("\n" + error_msg + "\n")
-            transcoding_successful = False; break
+            transcoding_successful = False; break # Stop processing other resolutions on failure
         except subprocess.TimeoutExpired as e:
-            error_msg = (f"Transcoding timed out for {height}p after {FFMPEG_TIMEOUT}s.\nCMD: {' '.join(e.cmd)}\n"
-                         f"-- STDERR (partial) --\n{e.stderr or 'N/A'}\n------------")
+            error_msg = f"Transcoding timed out for {height}p after {FFMPEG_TIMEOUT} seconds.\nCMD: {' '.join(e.cmd)}"
             logging.error(error_msg)
             with open(PROCESSING_ERROR_FILE, 'a') as f: f.write("\n" + error_msg + "\n")
-            transcoding_successful = False; break
+            transcoding_successful = False; break # Stop processing other resolutions on failure
         except Exception as e:
             error_msg = f"Unexpected error during transcoding for {height}p: {e}"
             logging.error(error_msg, exc_info=True)
             with open(PROCESSING_ERROR_FILE, 'a') as f: f.write("\n" + error_msg + "\n")
-            transcoding_successful = False; break
+            transcoding_successful = False; break # Stop processing other resolutions on failure
 
     # --- Create Master Playlist (only if all resolutions succeeded) ---
     if not transcoding_successful:
@@ -578,60 +578,64 @@ def transcode_to_hls(download_targets, download_dir, output_base_dir, resolution
         return False
 
     logging.info("All resolutions transcoded successfully. Creating master playlist...")
-    master_playlist_content = "#EXTM3U\n#EXT-X-VERSION:3\n"
-    audio_group_id = "aac_multi_audio"
+    master_playlist_content = "#EXTM3U\n#EXT-X-VERSION:3\n" # HLS version 3 is usually sufficient
 
-    # Generate EXT-X-MEDIA tags for each *originally active* language (might include skipped ones)
-    # *** This could lead to EXT-X-MEDIA tags for tracks not actually in the segments if skipping occurred ***
-    has_default_track_set = False
-    for lang_code in active_langs: # Uses the list from download phase
+    # Define the audio group ID (used to link audio tracks)
+    audio_group_id = "aac_multi_audio" # Descriptive ID
+
+    # Generate EXT-X-MEDIA tags for each active audio language
+    for lang_code in active_langs:
         if lang_code in AUDIO_TRACK_DETAILS:
             track_info = AUDIO_TRACK_DETAILS[lang_code]
-            is_default = track_info.get('default', False) and not has_default_track_set
-            if is_default: has_default_track_set = True
-            default_flag = "YES" if is_default else "NO"
-            autoselect_flag = "YES"
+            default_flag = "YES" if track_info.get('default', False) else "NO"
+            autoselect_flag = "YES" # Typically YES for languages, user agent might prefer based on system lang
             master_playlist_content += (
                 f'#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="{audio_group_id}",'
                 f'NAME="{track_info["name"]}",DEFAULT={default_flag},AUTOSELECT={autoselect_flag},'
-                f'LANGUAGE="{lang_code}"\n'
+                f'LANGUAGE="{lang_code}"\n' # URI is omitted because audio is muxed into video segments
             )
         else:
-            logging.warning(f"Details not found for active language '{lang_code}' in AUDIO_TRACK_DETAILS. Skipping EXT-X-MEDIA tag.")
+            # This case should be rare if active_langs is correct
+            logging.warning(f"Details not found for active language '{lang_code}' in AUDIO_TRACK_DETAILS during master playlist creation. Skipping its EXT-X-MEDIA tag.")
 
-    # Ensure at least one default track (simple approach)
-    if not has_default_track_set and active_langs:
-        master_playlist_content = master_playlist_content.replace('DEFAULT=NO', 'DEFAULT=YES', 1)
-        logging.warning("No default track set in config; marking first available track as default in playlist.")
-
-
+    # Generate EXT-X-STREAM-INF tags for each video resolution/variant
+    # Sort by bandwidth (lowest first) - good practice for players
     resolution_details_for_master.sort(key=lambda x: x['bandwidth'])
+
     for detail in resolution_details_for_master:
          codecs_str = f'CODECS="{detail["codecs"]}"'
-         resolution_str = f'RESOLUTION={detail["height"]}x{detail["height"]}' # Placeholder width
+         # Resolution format: WIDTHxHEIGHT - We only have height, use placeholder width or omit if player handles it
+         # Using heightxheight as placeholder:
+         resolution_str = f'RESOLUTION={detail["height"]}x{detail["height"]}'
+         # Alternative: Omit RESOLUTION if player determines it from video stream
+         # resolution_str = "" # Uncomment to omit
+
          master_playlist_content += (
              f'#EXT-X-STREAM-INF:BANDWIDTH={detail["bandwidth"]},'
-             f'{codecs_str},{resolution_str},AUDIO="{audio_group_id}"\n'
+             # f'AVERAGE-BANDWIDTH={int(detail["bandwidth"]*0.9)},' # Optional hint
+             f'{codecs_str},{resolution_str},AUDIO="{audio_group_id}"\n' # Link to the audio group
          )
-         master_playlist_content += f'{detail["playlist_path"]}\n'
+         master_playlist_content += f'{detail["playlist_path"]}\n' # Path to the resolution-specific playlist
 
+    # Write the generated master playlist to file
     master_playlist_path = os.path.join(output_base_dir, MASTER_PLAYLIST_NAME)
     try:
-        with open(master_playlist_path, 'w', encoding='utf-8') as f:
+        with open(master_playlist_path, 'w', encoding='utf-8') as f: # Specify encoding
             f.write(master_playlist_content)
         logging.info(f"Master playlist created successfully at {master_playlist_path}")
 
+        # Create the HLS ready marker file upon successful completion
         with open(HLS_READY_FILE, 'w') as f:
              f.write(time.strftime("%Y-%m-%d %H:%M:%S"))
         logging.info("HLS processing complete. Ready marker created.")
         end_time_total = time.time()
         logging.info(f"Total transcoding job time: {end_time_total - start_time_total:.2f}s")
-        return True
+        return True # Indicate success
     except IOError as e:
         error_msg = f"Failed to write master playlist or ready marker: {e}"
         logging.error(error_msg)
         with open(PROCESSING_ERROR_FILE, 'a') as f: f.write("\n" + error_msg + "\n")
-        return False
+        return False # Indicate failure
 
 
 def run_processing_job():
@@ -641,9 +645,11 @@ def run_processing_job():
     # Prevent multiple simultaneous runs using lock file
     if os.path.exists(PROCESSING_LOCK_FILE):
         logging.warning("Lock file found. Processing might be running, finished, or failed previously.")
+        # If HLS is ready, nothing more to do
         if os.path.exists(HLS_READY_FILE):
              logging.info("HLS already ready, existing lock file found. Exiting processing thread.")
              return
+        # If lock exists but not ready, assume another process is active or failed. Don't start again.
         logging.warning("HLS not ready, but lock file exists. Assuming another process is active or failed previously. Exiting thread.")
         return
 
@@ -852,3 +858,4 @@ if __name__ == '__main__':
     # Use a suitable port (e.g., 8000, 8080)
     # Set debug=False for production or when using background threads, as debug mode can interfere.
     app.run(host='0.0.0.0', port=8000, debug=False)
+    
