@@ -160,7 +160,7 @@ def process_video_distributed(video_id, source_filepath):
     except Exception as e:
         logging.error(f"[{thread_name}] Failed to generate source download URL: {e}. Trying fallback.")
         # Fallback (adjust if needed, e.g., read from config)
-        source_download_url = f"http://127.0.0.1:5000/download_source/{video_id}"
+        source_download_url = f"https://congenial-umbrella-production.up.railway.app/download_source/{video_id}"
         logging.warning(f"[{thread_name}] Using fallback source URL: {source_download_url}")
 
 
