@@ -31,8 +31,8 @@ app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH
 
 # URLs for the converter servers (Replace with actual IPs/hostnames and ports)
 CONVERTER_SERVERS = {
-    "360p": "http://localhost:5001", # Example URL for 360p converter
-    "480p": "http://localhost:5002", # Example URL for 480p converter
+    "360p": "https://three60p-q9ho.onrender.com", # Example URL for 360p converter
+    "480p": "https://four80p-dqur.onrender.com", # Example URL for 480p converter
     "720p": "https://seven20p-tq7s.onrender.com"  # Example URL for 720p converter
 }
 
