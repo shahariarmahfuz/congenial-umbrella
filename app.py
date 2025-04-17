@@ -36,9 +36,9 @@ app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH
 # URLs for the converter servers (Replace with actual IPs/hostnames and ports)
 # !!! আপনার কনভার্টার সার্ভারের আসল URL দিয়ে এগুলো পরিবর্তন করুন !!!
 CONVERTER_SERVERS = {
-    "360p": "https://three60p-g9ho.onrender.com", # আপনার 360p কনভার্টারের URL
-    "480p": "https://four80p-dgur.onrender.com", # আপনার 480p কনভার্টারের URL
-    "720p": "https://seven20p-tq7s.onrender.com"  # আপনার 720p কনভার্টারের URL
+    "360p": "https://360p-production.up.railway.app", # আপনার 360p কনভার্টারের URL
+    "480p": "https://480p-production.up.railway.app", # আপনার 480p কনভার্টারের URL
+    "720p": "https://720p-production.up.railway.app"  # আপনার 720p কনভার্টারের URL
 }
 
 # Define desired output resolutions and bitrates (height, video_bitrate, audio_bitrate)
