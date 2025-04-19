@@ -3,130 +3,108 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>HLS স্ট্রিমিং সার্ভার</title>
-    <link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css" />
-    <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif; padding: 20px; line-height: 1.6; background-color: #f9f9f9; color: #333; }
-        .container { max-width: 900px; margin: 20px auto; background-color: #fff; padding: 25px 30px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.08); }
-        .status { padding: 15px 20px; border-radius: 6px; margin-bottom: 25px; text-align: center; font-size: 1.1em;}
-        .status-processing { background-color: #fff3cd; border: 1px solid #ffe69c; color: #664d03; }
-        .status-ready { background-color: #d1e7dd; border: 1px solid #a3cfbb; color: #0a3622; }
-        .status-error { background-color: #f8d7da; border: 1px solid #f5c2c7; color: #842029; text-align: left;}
-        .status-error strong { display: block; margin-bottom: 10px; font-size: 1.2em;}
-        .status-error pre { background-color: #f1f1f1; padding: 10px; border-radius: 4px; white-space: pre-wrap; word-wrap: break-word; font-family: monospace; font-size: 0.9em; color: #555; }
-        .plyr-container { margin-top: 20px; border-radius: 6px; overflow: hidden;}
-        #loading-spinner {
-            border: 5px solid #e0e0e0; border-top: 5px solid #3498db;
-            border-radius: 50%; width: 50px; height: 50px;
-            animation: spin 1.2s linear infinite; margin: 20px auto;
-        }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        h1 { text-align: center; color: #2c3e50; margin-bottom: 30px;}
-        p { margin-bottom: 15px; }
-    </style>
+    <title>HLS ভিডিও প্লেয়ার</title>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
-    <script src="https://cdn.plyr.io/3.7.8/plyr.js"></script>
+    <style>
+        body { font-family: sans-serif; line-height: 1.6; padding: 20px; background-color: #f4f4f4; color: #333; margin: 0;}
+        .container { max-width: 800px; margin: 20px auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        h1 { color: #555; text-align: center; margin-bottom: 20px; }
+        #videoPlayer { width: 100%; max-width: 100%; border: 1px solid #ccc; background-color: #000; }
+        .status-message { text-align: center; padding: 30px; background-color: #e9f5ff; border: 1px solid #b3d7ff; border-radius: 5px; margin-top: 20px; }
+        .status-message.processing { background-color: #fffbe6; border-color: #ffe58f; }
+        .status-message p { margin: 0; font-size: 1.1em; color: #31708f; }
+        .status-message.processing p { color: #8a6d3b; }
+        .loader { border: 4px solid #f3f3f3; border-radius: 50%; border-top: 4px solid #3498db; width: 30px; height: 30px; -webkit-animation: spin 2s linear infinite; animation: spin 2s linear infinite; margin: 10px auto; }
+        @-webkit-keyframes spin { 0% { -webkit-transform: rotate(0deg); } 100% { -webkit-transform: rotate(360deg); } }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .upload-link { display: block; text-align: center; margin-top: 20px; }
+        .upload-link a { background-color: #007bff; color: white; padding: 10px 15px; text-decoration: none; border-radius: 4px; }
+        .upload-link a:hover { background-color: #0056b3; }
+    </style>
 </head>
 <body>
     <div class="container">
-        <h1>HLS ভিডিও স্ট্রিমিং স্ট্যাটাস</h1>
+        <h1>HLS ভিডিও স্ট্রিমিং</h1>
 
-        {% if status == 'error' %}
-            <div class="status status-error">
-                <strong>ত্রুটি সনাক্ত হয়েছে!</strong>
-                <p>ভিডিও প্রসেসিং করার সময় একটি সমস্যা হয়েছে। বিস্তারিত নিচে দেওয়া হলো:</p>
-                <pre>{{ error if error else 'কোনো বিস্তারিত এরর মেসেজ পাওয়া যায়নি।' }}</pre>
-                <p>অনুগ্রহ করে সার্ভার লগ চেক করুন। সমস্যা সমাধানের পর সার্ভার রিস্টার্ট করার প্রয়োজন হতে পারে এবং সার্ভার ডিরেক্টরি থেকে `.processing.lock` ও `.processing.error` ফাইলগুলো ম্যানুয়ালি ডিলিট করতে হতে পারে।</p>
-            </div>
-
-        {% elif status == 'processing' %}
-            <div class="status status-processing">
-                <p><strong>প্রসেসিং চলছে...</strong></p>
-                <p>ভিডিও ডাউনলোড এবং HLS ফরম্যাটে রূপান্তর করা হচ্ছে। এটি কয়েক মিনিট সময় নিতে পারে।</p>
-                <div id="loading-spinner"></div>
-                <p>এই পেজটি ৩০ সেকেন্ড পর স্বয়ংক্রিয়ভাবে রিফ্রেশ হবে স্ট্যাটাস চেক করার জন্য।</p>
-            </div>
+        {% if hls_ready %}
+            <video id="videoPlayer" controls></video>
             <script>
-                // প্রতি ৩০ সেকেন্ড পর পেজ রিফ্রেশ
-                setTimeout(() => {
-                    console.log("Refreshing page to check processing status...");
-                    window.location.reload();
-                }, 30000); // 30 seconds
-            </script>
+                document.addEventListener('DOMContentLoaded', function () {
+                    var video = document.getElementById('videoPlayer');
+                    // Ensure this path correctly points to your master playlist
+                    var videoSrc = '/hls/master.m3u8'; // Master playlist path
 
-        {% elif status == 'ready' %}
-            <div class="status status-ready">
-                <strong>HLS স্ট্রিম প্রস্তুত!</strong> নিচের প্লেয়ারে ভিডিওটি চালু করুন।
-            </div>
-            <div class="plyr-container">
-                <video id="hlsPlayer" playsinline controls preload="metadata">
-                    </video>
-            </div>
-
-            <script>
-                document.addEventListener('DOMContentLoaded', () => {
-                  const video = document.getElementById('hlsPlayer');
-                  const source = '/hls/master.m3u8'; // Flask সার্ভার থেকে HLS প্লেলিস্ট
-
-                  // Plyr এর ডিফল্ট অপশন (কোয়ালিটি সহ)
-                  const defaultOptions = {
-                      debug: false, // ডিবাগিং বন্ধ রাখা ভালো
-                      controls: ['play-large', 'play', 'progress', 'current-time', 'mute', 'volume', 'captions', 'settings', 'pip', 'airplay', 'fullscreen'],
-                      settings: ['captions', 'quality', 'speed', 'loop'],
-                      quality: {
-                          default: 720, // পছন্দের ডিফল্ট কোয়ালিটি
-                          options: [720, 480, 360], // উপলব্ধ কোয়ালিটি (সার্ভার থেকে আসা অনুযায়ী কাজ করবে)
-                          forced: true // এই অপশনগুলো ব্যবহার করতে ফোর্স করা
-                      }
-                  };
-
-                  try {
-                      if (Hls.isSupported()) {
-                          console.log("hls.js ব্যবহার করা হচ্ছে...");
-                          const hls = new Hls({ /* hls.js config if needed */ });
-                          hls.loadSource(source);
-
-                          hls.on(Hls.Events.MANIFEST_PARSED, function(event, data) {
-                             console.log("HLS Manifest loaded, levels found: " + data.levels.length);
-                             // ম্যানিফেস্ট লোড হওয়ার পর Plyr ইনিশিয়ালাইজ করা হচ্ছে
-                             const player = new Plyr(video, defaultOptions);
-                             window.player = player; // গ্লোবাল এক্সেস (অপশনাল)
-                          });
-
-                          hls.attachMedia(video);
-                          window.hls = hls; // গ্লোবাল এক্সেস (অপশনাল)
-
-                          hls.on(Hls.Events.ERROR, function(event, data) {
-                              console.error('HLS.js Error:', data);
-                          });
-
-                      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-                          console.log("নেটিভ HLS সাপোর্ট ব্যবহার করা হচ্ছে...");
-                          video.src = source;
-                          video.addEventListener('loadedmetadata', () => {
-                             // নেটিভ সাপোর্টের জন্য Plyr ইনিশিয়ালাইজ করা হচ্ছে
-                             const player = new Plyr(video, defaultOptions);
-                             window.player = player;
-                          });
-                           video.addEventListener('error', function(e) {
-                              console.error("Native HLS playback error:", e);
-                           });
-                      } else {
-                         console.error("দুঃখিত, আপনার ব্রাউজার HLS প্লেব্যাক সাপোর্ট করে না।");
-                         alert("আপনার ব্রাউজার HLS ভিডিও চালাতে সক্ষম নয়।");
-                      }
-                  } catch (e) {
-                      console.error("প্লেয়ার সেটআপ করার সময় ত্রুটি:", e);
-                      alert("ভিডিও প্লেয়ার লোড করার সময় একটি সমস্যা হয়েছে।");
-                  }
+                    if (Hls.isSupported()) {
+                        var hls = new Hls();
+                        console.log("HLS.js সমর্থিত। লোড হচ্ছে:", videoSrc);
+                        hls.loadSource(videoSrc);
+                        hls.attachMedia(video);
+                        hls.on(Hls.Events.MANIFEST_PARSED, function() {
+                            console.log("ম্যানিফেস্ট পার্স করা হয়েছে। প্লে শুরু হচ্ছে...");
+                            video.play().catch(e => console.error("প্লেব্যাক শুরু করতে সমস্যা:", e));
+                        });
+                        hls.on(Hls.Events.ERROR, function (event, data) {
+                            console.error('HLS.js ত্রুটি:', data);
+                            if (data.fatal) {
+                                switch(data.type) {
+                                case Hls.ErrorTypes.NETWORK_ERROR:
+                                    console.error("মারাত্মক নেটওয়ার্ক ত্রুটি ঘটেছে", data);
+                                    // নেটওয়ার্ক সমস্যা হলে আবার চেষ্টা করার চেষ্টা করতে পারে
+                                    // hls.startLoad();
+                                    break;
+                                case Hls.ErrorTypes.MEDIA_ERROR:
+                                    console.error("মারাত্মক মিডিয়া ত্রুটি ঘটেছে", data);
+                                    // hls.recoverMediaError(); // ত্রুটি পুনরুদ্ধারের চেষ্টা
+                                    break;
+                                default:
+                                    // পুনরুদ্ধার করা যায় না এমন ত্রুটি, hls instance ধ্বংস করুন
+                                    console.error("পুনরুদ্ধারযোগ্য নয় এমন ত্রুটি, HLS ধ্বংস হচ্ছে।");
+                                    hls.destroy();
+                                    break;
+                                }
+                            }
+                        });
+                    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                        // নেটিভ HLS সমর্থন (যেমন Safari তে)
+                        console.log("নেটিভ HLS সমর্থন পাওয়া গেছে।");
+                        video.src = videoSrc;
+                        video.addEventListener('loadedmetadata', function() {
+                           video.play().catch(e => console.error("প্লেব্যাক শুরু করতে সমস্যা:", e));
+                        });
+                         video.addEventListener('error', function(e) {
+                            console.error('নেটিভ HLS প্লেয়ার ত্রুটি:', video.error);
+                        });
+                    } else {
+                        alert('দুঃখিত, আপনার ব্রাউজার HLS স্ট্রিমিং সমর্থন করে না।');
+                        console.error('HLS সমর্থিত নয়।');
+                    }
                 });
             </script>
+            <div class="upload-link">
+                <a href="{{ url_for('index') }}">নতুন ভিডিও আপলোড করুন</a>
+            </div>
+
+        {% elif processing %}
+            <div class="status-message processing">
+                <p>আপনার ভিডিও প্রসেস করা হচ্ছে...</p>
+                <div class="loader"></div>
+                <p style="font-size: 0.9em; color: #666;">বড় ফাইলের জন্য এতে কিছু সময় লাগতে পারে। পৃষ্ঠাটি রিফ্রেশ করবেন না।</p>
+             </div>
+             <script>
+                // প্রতি 10 সেকেন্ডে পৃষ্ঠাটি রিফ্রেশ করুন যাতে স্ট্যাটাস আপডেট দেখা যায়
+                setTimeout(() => {
+                    window.location.reload();
+                }, 10000); // 10000 মিলিসেকেন্ড = 10 সেকেন্ড
+             </script>
 
         {% else %}
-             <div class="status status-error">
-                <strong>অজানা অবস্থা!</strong> সার্ভার বর্তমান স্ট্যাটাস নির্ধারণ করতে পারছে না। অনুগ্রহ করে সার্ভার রিস্টার্ট করুন এবং লগ ফাইল চেক করুন।
-            </div>
+            <div class="status-message">
+                 <p>কোনো ভিডিও প্লে করার জন্য প্রস্তুত নেই।</p>
+             </div>
+             <div class="upload-link">
+                 <a href="{{ url_for('index') }}">এখনই একটি ভিডিও আপলোড করুন</a>
+             </div>
         {% endif %}
-    </div>
-</body>
+
+    </div> </body>
 </html>
