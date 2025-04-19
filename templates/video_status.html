@@ -3,9 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ভিডিও স্ট্যাটাস - {{ video_id }}</title>
-
-    <link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css" />
+    <title>ভিডিও প্লেয়ার - {{ video_id }}</title> <link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css" />
 
     <style>
         body { font-family: sans-serif; line-height: 1.6; padding: 20px; background-color: #f4f4f4; color: #333; margin: 0;}
@@ -14,12 +12,11 @@
         .video-id-display { text-align: center; font-size: 0.9em; color: #777; margin-bottom: 20px; word-wrap: break-word; }
 
         /* Plyr প্লেয়ার কন্টেইনার */
-        .plyr__video-embed {
-             /* আপনি এখানে অতিরিক্ত স্টাইল যোগ করতে পারেন */
+        .plyr--video {
              margin-bottom: 15px; /* নীচের লিঙ্কের সাথে স্পেস তৈরি করতে */
+             /* আপনি চাইলে এখানে max-height যোগ করতে পারেন */
         }
-
-        /* স্ট্যাটাস মেসেজ ও অন্যান্য স্টাইল আগের মতোই থাকবে */
+        /* লোডিং এবং স্ট্যাটাস মেসেজের স্টাইল আগের মতোই */
         .status-message { text-align: center; padding: 30px; border-radius: 5px; margin-top: 20px; border: 1px solid; }
         .status-message.processing { background-color: #fffbe6; border-color: #ffe58f; color: #8a6d3b; }
         .status-message.error { background-color: #f8d7da; border-color: #f5c6cb; color: #721c24; }
@@ -41,8 +38,7 @@
 </head>
 <body>
     <div class="container">
-        <h1>ভিডিও স্ট্যাটাস</h1>
-        <p class="video-id-display">আইডি: {{ video_id }}</p>
+        <h1>ভিডিও প্লেয়ার</h1> <p class="video-id-display">আইডি: {{ video_id }}</p>
 
          {% with messages = get_flashed_messages(with_categories=true) %}
           {% if messages %}
@@ -54,9 +50,10 @@
           {% endif %}
         {% endwith %}
 
+        {# --- স্ট্যাটাস অনুযায়ী কন্টেন্ট দেখানো শুরু --- #}
         {% if status == 'ready' %}
-            <div class="plyr__video-embed" id="player-container">
-                 <video controls crossorigin playsinline id="hls-player"></video>
+            <div id="player-wrapper">
+                 <video controls crossorigin playsinline id="hls-player" style="width: 100%; height: auto;"></video>
             </div>
 
             <div class="action-link">
@@ -70,10 +67,10 @@
                 <p class="sub-text">আপনার ভিডিও প্রক্রিয়া করা হচ্ছে। এটি সম্পূর্ণ হতে ফাইলের আকারের উপর নির্ভর করে কিছু সময় লাগতে পারে।</p>
              </div>
              <script>
-                 // আগের মতোই স্ট্যাটাস চেক ও রিফ্রেশ করার লজিক
+                 // স্ট্যাটাস চেক ও রিফ্রেশ করার লজিক (আগের মতোই)
                  setTimeout(() => {
                     console.log("Checking status...");
-                     fetch(window.location.href)
+                     fetch(window.location.href) // বর্তমান URL ফেচ করে স্ট্যাটাস চেক
                        .then(response => {
                            if (!response.ok) { throw new Error('Network response was not ok'); }
                            return response.text();
@@ -81,6 +78,7 @@
                        .then(html => {
                            const parser = new DOMParser();
                            const doc = parser.parseFromString(html, 'text/html');
+                           // যদি লোডার এলিমেন্ট থাকে, তাহলে এখনো প্রসেসিং চলছে
                            if (doc.querySelector('.loader')) {
                                console.log("Still processing, reloading page...");
                                window.location.reload();
@@ -91,9 +89,9 @@
                        .catch(error => {
                             console.error("Error checking status:", error);
                             console.log("Error checking status, reloading page as fallback...");
-                            setTimeout(() => window.location.reload(), 20000);
+                            setTimeout(() => window.location.reload(), 20000); // ত্রুটি ঘটলে একটু বেশি সময় পর রিফ্রেশ
                        });
-                }, 15000);
+                }, 15000); // ১৫ সেকেন্ড পর পর চেক
              </script>
 
         {% elif status == 'error' %}
@@ -120,97 +118,121 @@
                 <a href="{{ url_for('index') }}">নতুন ভিডিও আপলোড করুন</a>
              </div>
         {% endif %}
+        {# --- স্ট্যাটাস অনুযায়ী কন্টেন্ট দেখানো শেষ --- #}
 
     </div> <script src="https://cdn.plyr.io/3.7.8/plyr.polyfilled.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
 
     <script>
+        // এই স্ক্রিপ্টটি শুধুমাত্র তখনই রান করবে যখন ভিডিও স্ট্যাটাস 'ready' হবে
+        {% if status == 'ready' %}
         document.addEventListener('DOMContentLoaded', () => {
-            // শুধুমাত্র 'ready' স্ট্যাটাসেই প্লেয়ার সেটআপ করুন
-            {% if status == 'ready' %}
-                const video = document.getElementById('hls-player');
-                const source = '/hls/{{ video_id }}/master.m3u8'; // আপনার HLS মাস্টারের URL
+            const video = document.getElementById('hls-player');
+            // নিশ্চিত করুন URL টি সঠিক
+            const source = '/hls/{{ video_id }}/master.m3u8';
 
-                // ব্যাকএন্ডে ব্যবহৃত রেজোলিউশনগুলো এখানে উল্লেখ করুন
-                // এটি Plyr কে কোয়ালিটি মেনুতে সঠিক লেবেল দেখাতে সাহায্য করে
-                const availableQualities = [720, 480, 360]; // app.py তে RESOLUTIONS অনুযায়ী
+            // আপনার app.py তে RESOLUTIONS এ দেওয়া উচ্চতাগুলো এখানে লিস্ট করুন
+            // এটি Plyr কে কোয়ালিটি মেনুতে সঠিক লেবেল দেখাতে সাহায্য করে
+            // যদি কোনো রেজোলিউশন তৈরি না হয় (যেমন মূল ভিডিও 480p হলে 720p বাদ যাবে),
+            // hls.js সেটি শনাক্ত করবে এবং Plyr শুধুমাত্র উপলব্ধ গুলোই দেখাবে।
+            const availableQualities = [720, 480, 360]; // উচ্চতা অনুযায়ী সাজানো ভালো
 
-                const defaultOptions = {
-                     // এখানে Plyr এর কাস্টম অপশন যোগ করতে পারেন
-                     tooltips: { controls: true, seek: true },
-                     // captions: { active: true, language: 'auto', update: true }, // সাবটাইটেল থাকলে
-                };
+            // Plyr প্লেয়ারের ডিফল্ট অপশন
+            const defaultOptions = {
+                 tooltips: { controls: true, seek: true },
+                 // আপনি এখানে আরও অপশন যোগ করতে পারেন, যেমন:
+                 // controls: ['play-large', 'play', 'progress', 'current-time', 'mute', 'volume', 'captions', 'settings', 'pip', 'airplay', 'fullscreen'],
+            };
 
-                // প্রথমে চেক করুন ব্রাউজার নেটিভভাবে HLS সমর্থন করে কিনা (যেমন Safari)
-                if (video.canPlayType('application/vnd.apple.mpegurl')) {
-                    console.log("নেটিভ HLS সমর্থন পাওয়া গেছে (যেমন Safari)।");
-                    video.src = source;
-                    // নেটিভ HLS এর জন্য Plyr ইনিশিয়ালাইজ করুন (কোয়ালিটি অপশন এখানে কম কার্যকর হতে পারে)
-                    const player = new Plyr(video, defaultOptions);
-                    window.player = player; // গ্লোবাল স্কোপে রাখুন ডিবাগিংয়ের জন্য (ঐচ্ছিক)
+            // ব্রাউজার নেটিভ HLS সমর্থন করে কিনা চেক করুন (যেমন Safari)
+            if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                console.log("নেটিভ HLS সমর্থন পাওয়া গেছে।");
+                video.src = source;
+                // নেটিভ HLS এর জন্য Plyr ইনিশিয়ালাইজ করুন
+                const player = new Plyr(video, defaultOptions);
+                window.player = player; // ডিবাগিংয়ের জন্য গ্লোবাল স্কোপে রাখুন (ঐচ্ছিক)
+                console.log("Plyr player initialized for native HLS.");
 
-                } else if (Hls.isSupported()) {
-                    // যেসব ব্রাউজার নেটিভভাবে HLS সমর্থন করে না, তাদের জন্য hls.js ব্যবহার করুন
-                    console.log("Hls.js ব্যবহার করে HLS প্লেব্যাক শুরু হচ্ছে।");
-                    const hls = new Hls();
-                    hls.loadSource(source);
+            } else if (Hls.isSupported()) {
+                // অন্যান্য ব্রাউজারের জন্য hls.js ব্যবহার করুন
+                console.log("Hls.js ব্যবহার করে HLS প্লেব্যাক সেটআপ করা হচ্ছে।");
+                const hls = new Hls({
+                    // আপনি এখানে hls.js এর কনফিগারেশন যোগ করতে পারেন
+                    // যেমন: capLevelToPlayerSize: true // 플레이어 크기에 맞춰 품질 제한
+                });
 
-                    // hls.js কে ভিডিও এলিমেন্টের সাথে বাইন্ড করুন
-                    hls.attachMedia(video);
+                hls.loadSource(source); // HLS সোর্স লোড করুন
 
-                    // Plyr কে hls.js এর সাথে কাজ করতে বলুন
-                    // hls.js লোড হওয়ার পর Plyr ইনিশিয়ালাইজ করা জরুরি
-                    const player = new Plyr(video, {
-                        ...defaultOptions, // আগের অপশনগুলো অন্তর্ভুক্ত করুন
-                        quality: {
-                           default: 480, // ডিফল্ট কোয়ালিটি (অপশনাল, hls.js অটো সিলেক্ট করতে পারে)
-                           options: availableQualities, // উপলব্ধ কোয়ালিটির তালিকা (hls.js থেকে প্রাপ্ত লেভেলের সাথে ম্যাচ করার জন্য)
-                           forced: false, // শুরুতে অ্যাডাপ্টিভ বিটরেট ব্যবহার করতে দিন
-                           onChange: (quality) => console.log('কোয়ালিটি পরিবর্তিত হয়েছে:', quality),
-                        },
-                    });
+                // hls.js কে ভিডিও এলিমেন্টের সাথে বাইন্ড করুন
+                hls.attachMedia(video);
 
-                    window.hls = hls; // Plyr এর ইন্টিগ্রেশনের জন্য hls instance কে window অবজেক্টে যোগ করুন
-                    window.player = player; // গ্লোবাল স্কোপে রাখুন ডিবাগিংয়ের জন্য (ঐচ্ছিক)
+                // Plyr কে hls.js এর সাথে কাজ করতে বলুন
+                // এটি নিশ্চিত করে যে Plyr hls.js থেকে কোয়ালিটি লেভেল পাবে
+                window.hls = hls; // <<<--- Plyr এর ইন্টিগ্রেশনের জন্য এটি গুরুত্বপূর্ণ
 
-                     // hls.js এর লেভেল লোড হওয়ার পর কোয়ালিটি অপশন আপডেট হতে পারে
-                     hls.on(Hls.Events.MANIFEST_PARSED, function(event, data) {
-                        console.log("HLS ম্যানিফেস্ট পার্স হয়েছে, লেভেলস:", data.levels);
-                        // এখানে player.quality আপডেট করার প্রয়োজন হতে পারে যদি ডায়নামিকভাবে করতে চান
-                        // কিন্তু সাধারণত Plyr এর quality.options কনফিগারেশনই যথেষ্ট
-                    });
+                // hls.js প্রস্তুত হওয়ার পর Plyr ইনিশিয়ালাইজ করুন
+                const player = new Plyr(video, {
+                    ...defaultOptions, // আগের অপশনগুলো অন্তর্ভুক্ত করুন
+                    // --- কোয়ালিটি সিলেকশন কনফিগারেশন ---
+                    quality: {
+                       default: 480, // ডিফল্টরূপে কোন কোয়ালিটি সিলেক্ট থাকবে (যেমন 480p)
+                                     // hls.js এটিকে ওভাররাইড করতে পারে যদি অ্যাডাপ্টিভ বিটরেট ভালো কাজ করে
+                       options: availableQualities, // উপলব্ধ কোয়ালিটির তালিকা (উচ্চতা)
+                       forced: false, // true দিলে প্লেয়ার সবসময় ডিফল্ট কোয়ালিটি ব্যবহার করবে (অ্যাডাপ্টিভ বন্ধ)
+                       onChange: (quality) => {
+                           console.log('Plyr: কোয়ালিটি পরিবর্তিত হয়েছে:', quality);
+                           // আপনি চাইলে এখানে অতিরিক্ত কাজ করতে পারেন
+                           // যেমন: UI তে বর্তমান কোয়ালিটি দেখানো
+                           // hls.js স্বয়ংক্রিয়ভাবে স্ট্রিম পরিবর্তন করবে
+                       },
+                    },
+                });
 
-                    hls.on(Hls.Events.ERROR, function(event, data) {
-                        console.error('HLS.js Error:', data);
-                         if (data.fatal) {
-                            switch(data.type) {
-                            case Hls.ErrorTypes.NETWORK_ERROR:
-                                console.error('Fatal network error encountered, trying to recover...');
-                                // hls.startLoad(); // রিকভারির চেষ্টা
-                                break;
-                            case Hls.ErrorTypes.MEDIA_ERROR:
-                                console.error('Fatal media error encountered, trying to recover...');
-                                // hls.recoverMediaError(); // রিকভারির চেষ্টা
-                                break;
-                            default:
-                                // cannot recover
-                                console.error('Unrecoverable HLS error', data);
-                                // hls.destroy(); // দরকার হলে hls instance ধ্বংস করুন
-                                break;
-                            }
+                window.player = player; // ডিবাগিংয়ের জন্য (ঐচ্ছিক)
+                console.log("Plyr player initialized with hls.js support.");
+
+                // hls.js এর ইভেন্ট শোনা (ঐচ্ছিক কিন্তু ডিবাগিংয়ের জন্য সহায়ক)
+                hls.on(Hls.Events.MANIFEST_PARSED, function(event, data) {
+                    console.log("HLS manifest পার্স হয়েছে। উপলব্ধ লেভেল:", data.levels.length);
+                    // আপনি এখানে data.levels দেখতে পারেন উপলব্ধ কোয়ালিটিগুলো নিশ্চিত করার জন্য
+                    // data.levels.forEach(level => console.log(level.height, level.bitrate));
+                });
+
+                hls.on(Hls.Events.LEVEL_SWITCHED, function(event, data) {
+                    var newLevel = data.level;
+                    console.log("HLS.js লেভেল পরিবর্তন করেছে:", hls.levels[newLevel].height + "p");
+                });
+
+                hls.on(Hls.Events.ERROR, function(event, data) {
+                    console.error('HLS.js Error:', data);
+                     if (data.fatal) {
+                        switch(data.type) {
+                        case Hls.ErrorTypes.NETWORK_ERROR:
+                            console.error('HLS.js: Fatal network error.');
+                            // hls.startLoad(); // রিকভারির চেষ্টা করতে পারেন
+                            break;
+                        case Hls.ErrorTypes.MEDIA_ERROR:
+                            console.error('HLS.js: Fatal media error.');
+                            // hls.recoverMediaError(); // রিকভারির চেষ্টা করতে পারেন
+                            break;
+                        default:
+                            console.error('HLS.js: Unrecoverable error.');
+                            // hls.destroy(); // instance ধ্বংস করা যেতে পারে
+                            break;
                         }
-                    });
+                    }
+                });
 
-                } else {
-                    console.error('দুঃখিত, আপনার ব্রাউজার HLS সমর্থন করে না।');
-                    // একটি ফলব্যাক বার্তা দেখাতে পারেন
-                     const playerContainer = document.getElementById('player-container');
-                     if(playerContainer) {
-                        playerContainer.innerHTML = '<p style="color: red; text-align: center;">দুঃখিত, আপনার ব্রাউজার HLS ভিডিও প্লেব্যাক সমর্থন করে না।</p>';
-                     }
-                }
-            {% endif %} // status == 'ready' শেষ
+            } else {
+                // যদি ব্রাউজার HLS বা hls.js কোনোটিই সমর্থন না করে
+                console.error('দুঃখিত, আপনার ব্রাউজার HLS সমর্থন করে না।');
+                const playerWrapper = document.getElementById('player-wrapper');
+                 if(playerWrapper) {
+                    playerWrapper.innerHTML = '<p style="color: red; text-align: center; padding: 20px; border: 1px solid red; border-radius: 4px;">দুঃখিত, আপনার ব্রাউজার HLS ভিডিও প্লেব্যাক সমর্থন করে না।</p>';
+                 }
+            }
         });
+        {% endif %} // status == 'ready' শেষ
     </script>
 
 </body>
