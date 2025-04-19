@@ -3,36 +3,110 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>HLS ভিডিও প্লেয়ার</title>
-    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <title>ভিডিও আপলোড করুন</title>
     <style>
-        body { font-family: sans-serif; line-height: 1.6; padding: 20px; background-color: #f4f4f4; color: #333; margin: 0;}
-        .container { max-width: 800px; margin: 20px auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        body { font-family: sans-serif; line-height: 1.6; padding: 20px; background-color: #f4f4f4; color: #333; }
+        .container { max-width: 600px; margin: auto; background: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
         h1 { color: #555; text-align: center; margin-bottom: 20px; }
-        #videoPlayer { width: 100%; max-width: 100%; border: 1px solid #ccc; background-color: #000; }
-        .status-message { text-align: center; padding: 30px; background-color: #e9f5ff; border: 1px solid #b3d7ff; border-radius: 5px; margin-top: 20px; }
-        .status-message.processing { background-color: #fffbe6; border-color: #ffe58f; }
-        .status-message p { margin: 0; font-size: 1.1em; color: #31708f; }
-        .status-message.processing p { color: #8a6d3b; }
-        .loader { border: 4px solid #f3f3f3; border-radius: 50%; border-top: 4px solid #3498db; width: 30px; height: 30px; -webkit-animation: spin 2s linear infinite; animation: spin 2s linear infinite; margin: 10px auto; }
-        @-webkit-keyframes spin { 0% { -webkit-transform: rotate(0deg); } 100% { -webkit-transform: rotate(360deg); } }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        .upload-link { display: block; text-align: center; margin-top: 20px; }
-        .upload-link a { background-color: #007bff; color: white; padding: 10px 15px; text-decoration: none; border-radius: 4px; }
-        .upload-link a:hover { background-color: #0056b3; }
+        .upload-form label { display: block; margin-bottom: 8px; font-weight: bold; }
+        .upload-form input[type="file"] { display: block; width: 100%; padding: 10px; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px; }
+        .upload-form button { background-color: #5cb85c; color: white; padding: 12px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; width: 100%; }
+        .upload-form button:hover { background-color: #4cae4c; }
+        .flash-messages { list-style: none; padding: 0; margin-bottom: 15px; }
+        .flash-messages li { padding: 10px; margin-bottom: 10px; border-radius: 4px; }
+        .flash-messages .success { background-color: #dff0d8; color: #3c763d; border: 1px solid #d6e9c6; }
+        .flash-messages .error { background-color: #f2dede; color: #a94442; border: 1px solid #ebccd1; }
+         /* Info message style (like the success message from upload) */
+        .flash-messages .info {
+            background-color: #d9edf7; /* Light blue */
+            color: #31708f; /* Darker blue text */
+            border: 1px solid #bce8f1; /* Lighter blue border */
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>HLS ভিডিও স্ট্রিমিং</h1>
+        <h1>আপনার ভিডিও আপলোড করুন</h1>
 
-        {% if hls_ready %}
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            <ul class="flash-messages">
+            {% for category, message in messages %}
+              {# Default category to 'info' if none provided #}
+              <li class="{{ category if category else 'info' }}">{{ message }}</li>
+            {% endfor %}
+            </ul>
+          {% endif %}
+        {% endwith %}
+
+        <form method="post" action="{{ url_for('upload_file') }}" enctype="multipart/form-data" class="upload-form">
+            <label for="video">ভিডিও ফাইল নির্বাচন করুন:</label>
+            <input type="file" id="video" name="video" accept="video/mp4,video/quicktime,video/x-msvideo,video/x-matroska,video/webm" required>
+            <button type="submit">আপলোড ও প্রসেস করুন</button>
+        </form>
+        <p style="text-align: center; margin-top: 15px; font-size: 0.9em; color: #777;">
+            অনুমোদিত ফাইল টাইপ: mp4, mov, avi, mkv, webm
+        </p>
+    </div>
+</body>
+</html>
+
+templates/video_status.html (নতুন HTML ফাইল):
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ভিডিও স্ট্যাটাস - {{ video_id }}</title>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <style>
+        body { font-family: sans-serif; line-height: 1.6; padding: 20px; background-color: #f4f4f4; color: #333; margin: 0;}
+        .container { max-width: 800px; margin: 20px auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        h1 { color: #555; text-align: center; margin-bottom: 5px; }
+        .video-id-display { text-align: center; font-size: 0.9em; color: #777; margin-bottom: 20px; word-wrap: break-word; }
+        #videoPlayer { width: 100%; max-width: 100%; border: 1px solid #ccc; background-color: #000; }
+        .status-message { text-align: center; padding: 30px; border-radius: 5px; margin-top: 20px; border: 1px solid; }
+        .status-message.processing { background-color: #fffbe6; border-color: #ffe58f; color: #8a6d3b; }
+        .status-message.error { background-color: #f8d7da; border-color: #f5c6cb; color: #721c24; }
+        .status-message.not-found { background-color: #e9ecef; border-color: #ced4da; color: #495057; }
+        .status-message p { margin: 10px 0; font-size: 1.1em; }
+        .error-details { margin-top: 15px; font-size: 0.9em; text-align: left; white-space: pre-wrap; background-color: #f1f1f1; padding: 10px; border-radius: 4px; max-height: 200px; overflow-y: auto;}
+        .loader { border: 4px solid #f3f3f3; border-radius: 50%; border-top: 4px solid #3498db; width: 30px; height: 30px; -webkit-animation: spin 2s linear infinite; animation: spin 2s linear infinite; margin: 10px auto; }
+        @-webkit-keyframes spin { 0% { -webkit-transform: rotate(0deg); } 100% { -webkit-transform: rotate(360deg); } }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .action-link { display: block; text-align: center; margin-top: 20px; }
+        .action-link a { background-color: #007bff; color: white; padding: 10px 15px; text-decoration: none; border-radius: 4px; }
+        .action-link a:hover { background-color: #0056b3; }
+         /* Flash Messages (also useful on this page) */
+        .flash-messages { list-style: none; padding: 0; margin-bottom: 15px; }
+        .flash-messages li { padding: 10px; margin-bottom: 10px; border-radius: 4px; }
+        .flash-messages .info { background-color: #d9edf7; color: #31708f; border: 1px solid #bce8f1; }
+        .flash-messages .error { background-color: #f2dede; color: #a94442; border: 1px solid #ebccd1; }
+
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>ভিডিও স্ট্যাটাস</h1>
+        <p class="video-id-display">আইডি: {{ video_id }}</p>
+
+         {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            <ul class="flash-messages">
+            {% for category, message in messages %}
+              <li class="{{ category if category else 'info' }}">{{ message }}</li>
+            {% endfor %}
+            </ul>
+          {% endif %}
+        {% endwith %}
+
+        {% if status == 'ready' %}
             <video id="videoPlayer" controls></video>
             <script>
                 document.addEventListener('DOMContentLoaded', function () {
                     var video = document.getElementById('videoPlayer');
-                    // Ensure this path correctly points to your master playlist
-                    var videoSrc = '/hls/master.m3u8'; // Master playlist path
+                    // Construct the HLS source URL using the video_id
+                    var videoSrc = '/hls/{{ video_id }}/master.m3u8';
 
                     if (Hls.isSupported()) {
                         var hls = new Hls();
@@ -40,32 +114,14 @@
                         hls.loadSource(videoSrc);
                         hls.attachMedia(video);
                         hls.on(Hls.Events.MANIFEST_PARSED, function() {
-                            console.log("ম্যানিফেস্ট পার্স করা হয়েছে। প্লে শুরু হচ্ছে...");
+                            console.log("ম্যানিফেস্ট পার্স হয়েছে। প্লে শুরু হচ্ছে...");
                             video.play().catch(e => console.error("প্লেব্যাক শুরু করতে সমস্যা:", e));
                         });
                         hls.on(Hls.Events.ERROR, function (event, data) {
                             console.error('HLS.js ত্রুটি:', data);
-                            if (data.fatal) {
-                                switch(data.type) {
-                                case Hls.ErrorTypes.NETWORK_ERROR:
-                                    console.error("মারাত্মক নেটওয়ার্ক ত্রুটি ঘটেছে", data);
-                                    // নেটওয়ার্ক সমস্যা হলে আবার চেষ্টা করার চেষ্টা করতে পারে
-                                    // hls.startLoad();
-                                    break;
-                                case Hls.ErrorTypes.MEDIA_ERROR:
-                                    console.error("মারাত্মক মিডিয়া ত্রুটি ঘটেছে", data);
-                                    // hls.recoverMediaError(); // ত্রুটি পুনরুদ্ধারের চেষ্টা
-                                    break;
-                                default:
-                                    // পুনরুদ্ধার করা যায় না এমন ত্রুটি, hls instance ধ্বংস করুন
-                                    console.error("পুনরুদ্ধারযোগ্য নয় এমন ত্রুটি, HLS ধ্বংস হচ্ছে।");
-                                    hls.destroy();
-                                    break;
-                                }
-                            }
+                            // Add more robust error handling if needed
                         });
                     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-                        // নেটিভ HLS সমর্থন (যেমন Safari তে)
                         console.log("নেটিভ HLS সমর্থন পাওয়া গেছে।");
                         video.src = videoSrc;
                         video.addEventListener('loadedmetadata', function() {
@@ -80,29 +136,61 @@
                     }
                 });
             </script>
-            <div class="upload-link">
+            <div class="action-link">
                 <a href="{{ url_for('index') }}">নতুন ভিডিও আপলোড করুন</a>
             </div>
 
-        {% elif processing %}
+        {% elif status == 'processing' %}
             <div class="status-message processing">
                 <p>আপনার ভিডিও প্রসেস করা হচ্ছে...</p>
                 <div class="loader"></div>
-                <p style="font-size: 0.9em; color: #666;">বড় ফাইলের জন্য এতে কিছু সময় লাগতে পারে। পৃষ্ঠাটি রিফ্রেশ করবেন না।</p>
+                <p style="font-size: 0.9em; color: #666;">বড় ফাইলের জন্য এতে কিছু সময় লাগতে পারে। পৃষ্ঠাটি রিফ্রেশ করার প্রয়োজন নেই, এটি স্বয়ংক্রিয়ভাবে আপডেট হবে।</p>
              </div>
              <script>
                 // প্রতি 10 সেকেন্ডে পৃষ্ঠাটি রিফ্রেশ করুন যাতে স্ট্যাটাস আপডেট দেখা যায়
                 setTimeout(() => {
-                    window.location.reload();
+                    // Only reload if the status is still processing, prevent reload loops on error/ready
+                    fetch(window.location.href) // Fetch current page status without full reload
+                       .then(response => response.text())
+                       .then(html => {
+                           // Crude check: See if the processing message is still present
+                           // A better approach might be a dedicated status API endpoint
+                           if (html.includes('ভিডিও প্রসেস করা হচ্ছে')) {
+                               console.log("Still processing, reloading...");
+                               window.location.reload();
+                           } else {
+                               console.log("Processing likely finished or encountered an error. Stopping auto-reload.");
+                           }
+                       })
+                       .catch(error => {
+                            console.error("Error checking status:", error);
+                            // Fallback to reload anyway after a delay
+                            setTimeout(() => window.location.reload(), 15000);
+                       });
                 }, 10000); // 10000 মিলিসেকেন্ড = 10 সেকেন্ড
              </script>
 
-        {% else %}
-            <div class="status-message">
-                 <p>কোনো ভিডিও প্লে করার জন্য প্রস্তুত নেই।</p>
+        {% elif status == 'error' %}
+            <div class="status-message error">
+                <p>ভিডিও প্রসেসিংয়ের সময় একটি ত্রুটি ঘটেছে।</p>
+                {% if error %}
+                    <div class="error-details">
+                        <strong>বিস্তারিত:</strong>
+                        <pre>{{ error }}</pre>
+                    </div>
+                {% endif %}
              </div>
-             <div class="upload-link">
-                 <a href="{{ url_for('index') }}">এখনই একটি ভিডিও আপলোড করুন</a>
+             <div class="action-link">
+                <a href="{{ url_for('index') }}">আবার চেষ্টা করুন (নতুন আপলোড)</a>
+             </div>
+
+        {% else %} {# status == 'not_found' or unknown #}
+             <div class="status-message not-found">
+                 <p>এই আইডি সহ ভিডিও খুঁজে পাওয়া যায়নি বা এখনো প্রসেস হয়নি।</p>
+                 <p style="font-size: 0.9em; color: #6c757d;">আপনি কি সঠিক আইডি ব্যবহার করছেন? আইডি: {{ video_id }}</p>
+             </div>
+              <div class="action-link">
+                <a href="{{ url_for('index') }}">নতুন ভিডিও আপলোড করুন</a>
              </div>
         {% endif %}
 
