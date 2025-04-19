@@ -6,7 +6,7 @@ import logging
 import time
 import shutil
 import uuid
-import math
+import math # <<<--- প্রস্থ গণনার জন্য math.floor ব্যবহার করা যেতে পারে
 from flask import Flask, render_template, send_from_directory, abort, Response, request, redirect, url_for, flash
 
 # === Logging Configuration ===
@@ -178,14 +178,14 @@ def transcode_to_hls(video_id, input_path, output_base_dir, resolutions):
 
     master_playlist_content = "#EXTM3U\n#EXT-X-VERSION:3\n" # মাস্টার প্লেলিস্টের শুরু
     ffmpeg_commands = [] # ffmpeg কমান্ডগুলো রাখার তালিকা
-    resolution_details_for_master = [] # মাস্টার প্লেলিস্টের জন্য রেজোলিউশনের তথ্য
+    resolution_details_for_master = [] # মাস্টার প্লেলিস্টের জন্য রেজোলিউশনের তথ্য (শুধুমাত্র সফলগুলো থাকবে)
 
     # --- প্রতিটি কাঙ্ক্ষিত রেজোলিউশনের জন্য কমান্ড প্রস্তুত করুন এবং প্রস্থ গণনা করুন ---
     for target_height, v_bitrate, a_bitrate in resolutions:
-        # যদি টার্গেট রেজোলিউশন মূল ভিডিওর চেয়ে বেশি হয়, তবে সেটি বাদ দিন
-        if target_height > original_height + 10: # +10 একটি ছোট মার্জিন
+        # >>> গুরুত্বপূর্ণ চেক: যদি টার্গেট রেজোলিউশন মূল ভিডিওর চেয়ে বেশি হয়, তবে সেটি বাদ দিন <<<
+        if target_height > original_height + 10: # +10 একটি ছোট মার্জিন সহনশীলতার জন্য
              logging.warning(f"[{video_id}] {target_height}p বাদ দেওয়া হচ্ছে কারণ এটি মূল উচ্চতা ({original_height}p) থেকে বেশি।")
-             continue
+             continue # পরবর্তী রেজোলিউশনে যান
 
         # মূল অ্যাসপেক্ট রেশিও ব্যবহার করে টার্গেট প্রস্থ গণনা করুন
         aspect_ratio = original_width / original_height
@@ -219,87 +219,73 @@ def transcode_to_hls(video_id, input_path, output_base_dir, resolutions):
             '-hls_flags', 'delete_segments',     # আগের সেগমেন্ট মুছে নতুন করে শুরু করুন
             absolute_playlist_path               # আউটপুট প্লেলিস্ট ফাইলের পাথ
         ]
-        ffmpeg_commands.append({'cmd': cmd, 'height': target_height}) # কমান্ড তালিকায় যোগ করুন
-        bandwidth = int(v_bitrate[:-1]) * 1000 + int(a_bitrate[:-1]) * 1000 # ব্যান্ডউইথ গণনা (আনুমানিক)
-        resolution_details_for_master.append({ # মাস্টার প্লেলিস্টের জন্য তথ্য সংরক্ষণ করুন
-            'bandwidth': bandwidth,
-            'width': target_width,           # গণনা করা প্রস্থ <<<---
-            'height': target_height,         # টার্গেট উচ্চতা
-            'playlist_path': relative_playlist_path # প্লেলিস্টের রিলেটিভ পাথ
-        })
-    # --- কমান্ড প্রস্তুত করা শেষ ---
-
-    # যদি কোনো উপযুক্ত রেজোলিউশন না পাওয়া যায়
-    if not resolution_details_for_master:
-         error_msg = f"[{video_id}] মূল আকার ({original_width}x{original_height}) এর জন্য কোনো উপযুক্ত রেজোলিউশন পাওয়া যায়নি।"
-         logging.error(error_msg)
-         try:
-            with open(error_file_path, 'w') as f: f.write(error_msg)
-         except IOError as e:
-             logging.error(f"[{video_id}] রেজোলিউশন-নেই ত্রুটি ফাইল লিখতে ব্যর্থ: {error_file_path}: {e}")
-         return False
-
-    # --- ffmpeg কমান্ডগুলো চালান ---
-    start_time_total = time.time() # মোট সময় গণনা শুরু
-    success = True # প্রসেস সফল হয়েছে কিনা তার ফ্ল্যাগ
-    for item in ffmpeg_commands:
-        cmd = item['cmd']
-        height = item['height']
-        logging.info(f"[{video_id}] {height}p এর জন্য ffmpeg চালানো হচ্ছে...")
+        # এই রেজোলিউশনের জন্য প্রয়োজনীয় তথ্য সংরক্ষণ করুন (কমান্ড এবং প্লেলিস্টের বিবরণ)
+        current_resolution_details = {
+            'bandwidth': int(v_bitrate[:-1]) * 1000 + int(a_bitrate[:-1]) * 1000,
+            'width': target_width,
+            'height': target_height,
+            'playlist_path': relative_playlist_path
+        }
+        # --- ffmpeg কমান্ডগুলো চালান ---
+        # এই লুপটি প্রতিটি রেজোলিউশনের জন্য ffmpeg চালানোর চেষ্টা করবে
+        logging.info(f"[{video_id}] {target_height}p এর জন্য ffmpeg চালানো হচ্ছে...")
         logging.debug(f"[{video_id}] কমান্ড: {' '.join(cmd)}")
         start_time_res = time.time() # এই রেজোলিউশনের সময় গণনা শুরু
         try:
             # কমান্ড চালান ও আউটপুট ক্যাপচার করুন
             result = subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=FFMPEG_TIMEOUT)
             end_time_res = time.time() # এই রেজোলিউশনের সময় গণনা শেষ
-            logging.info(f"[{video_id}] {height}p এর জন্য ffmpeg সফলভাবে শেষ হয়েছে ({end_time_res - start_time_res:.2f} সেকেন্ড)।")
+            logging.info(f"[{video_id}] {target_height}p এর জন্য ffmpeg সফলভাবে শেষ হয়েছে ({end_time_res - start_time_res:.2f} সেকেন্ড)।")
+            # সফল হলে, এই রেজোলিউশনের বিবরণ মাস্টার প্লেলিস্টের জন্য যোগ করুন
+            resolution_details_for_master.append(current_resolution_details)
             # সফল হলেও stderr লগ করুন (ওয়ার্নিং থাকতে পারে)
             if result.stderr:
-                 logging.debug(f"[{video_id}] ffmpeg stderr ({height}p):\n{result.stderr[-1000:]}") # শেষ ১০০০ অক্ষর
+                 logging.debug(f"[{video_id}] ffmpeg stderr ({target_height}p):\n{result.stderr[-1000:]}") # শেষ ১০০০ অক্ষর
+
+        # >>> গুরুত্বপূর্ণ ত্রুটি হ্যান্ডলিং: যদি ffmpeg ব্যর্থ হয় <<<
         except subprocess.CalledProcessError as e:
-            # যদি ffmpeg কোনো ত্রুটি কোড রিটার্ন করে
-            error_msg = (f"[{video_id}] {height}p এর জন্য ট্রান্সকোডিং ব্যর্থ (ffmpeg exit code {e.returncode})।\n"
-                         f"ইনপুট: {input_path}\n"
-                         f"কমান্ড: {' '.join(e.cmd)}\n"
-                         f"STDERR (শেষ ১০০০ অক্ষর):\n...{e.stderr[-1000:]}")
+            error_msg = (f"[{video_id}] {target_height}p এর জন্য ট্রান্সকোডিং ব্যর্থ (ffmpeg exit code {e.returncode})।\n"
+                         f"ইনপুট: {input_path}\nCommand: {' '.join(e.cmd)}\n"
+                         f"STDERR (last 1000 chars):\n...{e.stderr[-1000:]}")
             logging.error(error_msg)
             try:
                 with open(error_file_path, 'w') as f: f.write(error_msg) # ত্রুটি ফাইল লিখুন
             except IOError as io_err:
                 logging.error(f"[{video_id}] ffmpeg ত্রুটি ফাইল লিখতে ব্যর্থ: {error_file_path}: {io_err}")
-            success = False # ফ্ল্যাগ সেট করুন
-            break # পরবর্তী রেজোলিউশন প্রসেস করা বন্ধ করুন
+            # >>> এখানে লুপ ব্রেক করা হচ্ছে, তাই পরবর্তী রেজোলিউশনগুলো চেষ্টা করা হবে না <<<
+            break
         except subprocess.TimeoutExpired as e:
-            # যদি কমান্ডটি টাইমআউট হয়ে যায়
-            error_msg = (f"[{video_id}] {height}p এর জন্য ট্রান্সকোডিং টাইমআউট ({FFMPEG_TIMEOUT} সেকেন্ড)।\n"
-                         f"ইনপুট: {input_path}\n"
-                         f"কমান্ড: {' '.join(e.cmd)}")
+            error_msg = (f"[{video_id}] {target_height}p এর জন্য ট্রান্সকোডিং টাইমআউট ({FFMPEG_TIMEOUT} সেকেন্ড)।\n"
+                         f"ইনপুট: {input_path}\nCommand: {' '.join(e.cmd)}")
             logging.error(error_msg)
             try:
                 with open(error_file_path, 'w') as f: f.write(error_msg) # ত্রুটি ফাইল লিখুন
             except IOError as io_err:
                  logging.error(f"[{video_id}] টাইমআউট ত্রুটি ফাইল লিখতে ব্যর্থ: {error_file_path}: {io_err}")
-            success = False # ফ্ল্যাগ সেট করুন
-            break # পরবর্তী রেজোলিউশন প্রসেস করা বন্ধ করুন
+            # >>> এখানে লুপ ব্রেক করা হচ্ছে, তাই পরবর্তী রেজোলিউশনগুলো চেষ্টা করা হবে না <<<
+            break
         except Exception as e:
-            # অন্যান্য অপ্রত্যাশিত ত্রুটি
-            error_msg = f"[{video_id}] {height}p এর জন্য ট্রান্সকোডিংয়ের সময় অপ্রত্যাশিত ত্রুটি: {e}\nইনপুট: {input_path}"
+            error_msg = f"[{video_id}] {target_height}p এর জন্য ট্রান্সকোডিংয়ের সময় অপ্রত্যাশিত ত্রুটি: {e}\nInput: {input_path}"
             logging.error(error_msg, exc_info=True)
             try:
                  with open(error_file_path, 'w') as f: f.write(error_msg) # ত্রুটি ফাইল লিখুন
             except IOError as io_err:
                 logging.error(f"[{video_id}] অপ্রত্যাশিত ত্রুটি ফাইল লিখতে ব্যর্থ: {error_file_path}: {io_err}")
-            success = False # ফ্ল্যাগ সেট করুন
-            break # পরবর্তী রেজোলিউশন প্রসেস করা বন্ধ করুন
-    # --- ffmpeg চালানো শেষ ---
+            # >>> এখানে লুপ ব্রেক করা হচ্ছে, তাই পরবর্তী রেজোলিউশনগুলো চেষ্টা করা হবে না <<<
+            break
+        # --- একটি রেজোলিউশনের জন্য ffmpeg চালানো শেষ ---
 
-    # যদি কোনো একটি রেজোলিউশন প্রসেস করতে ব্যর্থ হয়
-    if not success:
-        logging.error(f"[{video_id}] ffmpeg ত্রুটির কারণে HLS তৈরি বাতিল করা হচ্ছে।")
-        return False # ব্যর্থ রিটার্ন করুন
+    # --- রেজোলিউশন লুপ শেষ ---
 
-    # --- মাস্টার প্লেলিস্ট তৈরি করুন (সঠিক RESOLUTION সহ) ---
-    logging.info(f"[{video_id}] সমস্ত রেজোলিউশন সফলভাবে ট্রান্সকোড করা হয়েছে। মাস্টার প্লেলিস্ট তৈরি করা হচ্ছে...")
+    # যদি কোনো রেজোলিউশন সফলভাবে তৈরি না হয় (লিস্ট খালি থাকে)
+    if not resolution_details_for_master:
+         # এই বার্তাটি তখনই আসবে যদি প্রথম রেজোলিউশনটিই ব্যর্থ হয় বা কোনোটিই উপযুক্ত না হয়
+         logging.error(f"[{video_id}] কোনো রেজোলিউশন সফলভাবে তৈরি হয়নি। মাস্টার প্লেলিস্ট তৈরি করা সম্ভব নয়।")
+         # ত্রুটি ফাইল আগে তৈরি হয়ে থাকার কথা, তাই এখানে আবার লেখার দরকার নেই যদি না কোনো নতুন ত্রুটি ঘটে
+         return False # ব্যর্থ রিটার্ন করুন
+
+    # --- মাস্টার প্লেলিস্ট তৈরি করুন (শুধুমাত্র সফল রেজোলিউশনগুলো দিয়ে) ---
+    logging.info(f"[{video_id}] সফলভাবে তৈরি হওয়া রেজোলিউশনগুলো দিয়ে মাস্টার প্লেলিস্ট তৈরি করা হচ্ছে...")
     for detail in resolution_details_for_master:
         # গণনা করা প্রস্থ ও উচ্চতা ব্যবহার করুন
         master_playlist_content += f'#EXT-X-STREAM-INF:BANDWIDTH={detail["bandwidth"]},RESOLUTION={detail["width"]}x{detail["height"]}\n'
@@ -317,15 +303,16 @@ def transcode_to_hls(video_id, input_path, output_base_dir, resolutions):
         with open(ready_file_path, 'w') as f:
              f.write(time.strftime("%Y-%m-%d %H:%M:%S"))
         logging.info(f"[{video_id}] HLS প্রসেসিং সম্পন্ন। রেডি মার্কার তৈরি হয়েছে: {ready_file_path}")
-        end_time_total = time.time() # মোট সময় গণনা শেষ
-        logging.info(f"[{video_id}] মোট ট্রান্সকোডিং সময়: {end_time_total - start_time_total:.2f} সেকেন্ড")
+        # মোট সময় লগ করার প্রয়োজন নেই কারণ এটি লুপের মধ্যে পরিবর্তিত হতে পারে
         return True # সফল রিটার্ন করুন
     except IOError as e:
         # যদি প্লেলিস্ট বা রেডি ফাইল লিখতে সমস্যা হয়
         error_msg = f"[{video_id}] মাস্টার প্লেলিস্ট বা রেডি মার্কার লিখতে ব্যর্থ: {e}"
         logging.error(error_msg)
         try:
-            with open(error_file_path, 'w') as f: f.write(error_msg) # ত্রুটি ফাইল লিখুন
+            # যদি আগে কোনো ত্রুটি ফাইল না থাকে, তবে এটি লিখুন
+            if not os.path.exists(error_file_path):
+                 with open(error_file_path, 'w') as f: f.write(error_msg)
         except IOError as io_err:
              logging.error(f"[{video_id}] প্লেলিস্ট লেখা ত্রুটি ফাইল লিখতে ব্যর্থ: {error_file_path}: {io_err}")
         return False # ব্যর্থ রিটার্ন করুন
@@ -339,7 +326,6 @@ def run_processing_job(video_id, uploaded_video_path, hls_output_dir):
     ready_file_path = os.path.join(hls_output_dir, HLS_READY_FILENAME)     # রেডি ফাইলের পাথ
 
     logging.info(f"[{video_id}] প্রসেসিং থ্রেড শুরু হয়েছে।")
-    # লক ফাইলটি /upload রুট দ্বারা আগে তৈরি করা উচিত
 
     try:
         # এই ভিডিও আইডির জন্য আগের HLS কনটেন্ট ও স্টেট ফাইল মুছে ফেলুন
@@ -368,7 +354,9 @@ def run_processing_job(video_id, uploaded_video_path, hls_output_dir):
         error_msg = f"[{video_id}] প্রসেসিং থ্রেডে মারাত্মক অপ্রত্যাশিত ত্রুটি: {e}"
         logging.error(error_msg, exc_info=True)
         try:
-            with open(error_file_path, 'w') as f: f.write(error_msg) # ত্রুটি ফাইল লিখুন
+            # যদি আগে কোনো ত্রুটি ফাইল না থাকে তবে এটি লিখুন
+            if not os.path.exists(error_file_path):
+                 with open(error_file_path, 'w') as f: f.write(error_msg)
         except IOError as io_err: logging.error(f"[{video_id}] মারাত্মক ত্রুটি ফাইল লিখতে ব্যর্থ: {io_err}")
 
     finally:
@@ -379,17 +367,13 @@ def run_processing_job(video_id, uploaded_video_path, hls_output_dir):
                 logging.info(f"[{video_id}] প্রসেসিং লক ফাইল মুছে ফেলা হয়েছে: {lock_file_path}")
             except OSError as e:
                 logging.error(f"[{video_id}] প্রসেসিং লক ফাইল মুছতে ব্যর্থ: {e}")
-        # ঐচ্ছিক: প্রসেসিংয়ের পর আপলোড করা সোর্স ফাইল মুছে ফেলা
+        # ঐচ্ছিক: প্রসেসিংয়ের পর আপলোড করা সোর্স ফাইল মুছে ফেলা (কমেন্ট আউট করা আছে)
         # if os.path.exists(uploaded_video_path):
-        #     try:
-        #         os.remove(uploaded_video_path)
-        #         logging.info(f"[{video_id}] আপলোড করা সোর্স ফাইল মুছে ফেলা হয়েছে: {uploaded_video_path}")
-        #     except OSError as e:
-        #         logging.warning(f"[{video_id}] সোর্স ফাইল মুছতে ব্যর্থ {uploaded_video_path}: {e}")
+        #     try: os.remove(uploaded_video_path) ...
 
 
 # === Flask Routes ===
-# Flask অ্যাপ্লিকেশন রুট (URL পাথ এবং সংশ্লিষ্ট ফাংশন)
+# Flask অ্যাপ্লিকেশন রুট (URL পাথ এবং সংশ্লিষ্ট ফাংশন) - আগের মতোই
 
 @app.route('/', methods=['GET'])
 def index():
@@ -579,7 +563,6 @@ def serve_hls_files(video_id, filename):
         logging.error(f"[{video_id}] HLS ফাইল সার্ভ করতে ত্রুটি ({filename}): {e}", exc_info=True)
         abort(500) # Internal Server Error
 
-
 # === Application Startup ===
 # অ্যাপ্লিকেশন শুরু হওয়ার সময় করণীয়
 
@@ -606,11 +589,4 @@ if __name__ == '__main__':
     # অ্যাপ্লিকেশনটি চালান
     logging.info("Flask অ্যাপ্লিকেশন শুরু হচ্ছে...")
     # debug=False প্রোডাকশন বা স্থিতিশীলতার জন্য ভালো
-    # আপনি চাইলে ffmpeg/ffprobe না থাকলে অ্যাপ চালানো বন্ধ করতে পারেন (নিচের কমেন্ট করা কোড)
-    # if ffmpeg_ok and ffprobe_ok:
-    #      app.run(host='0.0.0.0', port=8000, debug=False)
-    # else:
-    #      logging.error("প্রয়োজনীয় নির্ভরতা (ffmpeg/ffprobe) না থাকায় অ্যাপ্লিকেশন শুরু করা যাচ্ছে না।")
-
-    # নির্ভরতা না থাকলেও অ্যাপ চালানোর অনুমতি দিন, ত্রুটি প্রসেসিংয়ের সময় দেখা যাবে
     app.run(host='0.0.0.0', port=8000, debug=False)
