@@ -4,8 +4,8 @@ import requests
 import threading
 import logging
 import time
-import shutil # ডিরেক্টরি পরিষ্কার করার জন্য
-from flask import Flask, render_template, send_from_directory, abort
+import shutil
+from flask import Flask, render_template, send_from_directory, abort, Response, request, redirect, url_for, flash
 
 # === Logging Configuration ===
 logging.basicConfig(
@@ -16,37 +16,37 @@ logging.basicConfig(
 
 # === Flask App Initialization ===
 app = Flask(__name__)
+# Flash messages need a secret key
+app.secret_key = os.urandom(24) # বা একটি নির্দিষ্ট স্ট্রিং ব্যবহার করুন
 
 # === Configuration Constants ===
-# <<<--- ফেসবুক URL - এটি অস্থায়ী হতে পারে --->>>
-VIDEO_URL = "https://video-mxp1-1.xx.fbcdn.net/o1/v/t2/f2/m69/AQM8S3pFxa70tno6zop7jYr1U16B60EHmFPInE6TGBwoOaJnQOXYtCml3Qkpv-p01h-Mq8WY8cuwf4HDp-EFVkCJ.mp4?strext=1&_nc_cat=103&_nc_sid=5e9851&_nc_ht=video-mxp1-1.xx.fbcdn.net&_nc_ohc=PsDTzb3w2UsQ7kNvwEdobVT&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5GQUNFQk9PSy4uQzMuNzIwLmRhc2hfaDI2NC1iYXNpYy1nZW4yXzcyMHAiLCJ4cHZfYXNzZXRfaWQiOjE0MDc5NDYzMjM1NTI4NTksInZpX3VzZWNhc2VfaWQiOjEwMTIyLCJkdXJhdGlvbl9zIjoyMDAsInVybGdlbl9zb3VyY2UiOiJ3d3cifQ%3D%3D&ccb=17-1&vs=f2a9875f9f41aa3d&_nc_vs=HBksFQIYOnBhc3N0aHJvdWdoX2V2ZXJzdG9yZS9HTmhqVUIzRVlmM3FMbU1DQVBzVVd5WFBEaXNHYm1kakFBQUYVAALIAQAVAhg6cGFzc3Rocm91Z2hfZXZlcnN0b3JlL0dJTkhVaDB6TFExRGFSOEZBR2tockdVaUNUdEdickZxQUFBRhUCAsgBACgAGAAbAogHdXNlX29pbAExEnByb2dyZXNzaXZlX3JlY2lwZQExFQAAJrap08ehoYAFFQIoAkMzLBdAaRiLQ5WBBhgZZGFzaF9oMjY0LWJhc2ljLWdlbjJfNzIwcBEAdQIA&_nc_zt=28&oh=00_AfEkU99vSfDRfVji51klRkyvAj5hml5FUlj3hFYozoLfGg&oe=68056F07&dl=1"
-# <<<------------------------------------------>>>
-
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DOWNLOAD_DIR = os.path.join(BASE_DIR, 'downloads')
+UPLOAD_DIR = os.path.join(BASE_DIR, 'uploads') # Changed from DOWNLOAD_DIR
 STATIC_DIR = os.path.join(BASE_DIR, 'static')
 HLS_DIR = os.path.join(STATIC_DIR, 'hls')
-DOWNLOADED_FILENAME = "source_video.mp4"
+ALLOWED_EXTENSIONS = {'mp4', 'mov', 'avi', 'mkv', 'webm'} # অনুমোদিত ভিডিও এক্সটেনশন
+UPLOADED_FILENAME = "source_video" # মূল ফাইলের নামের বেস (এক্সটেনশন যোগ হবে)
 MASTER_PLAYLIST_NAME = "master.m3u8"
 
-# Standard resolutions (height, width - assuming 16:9, video_bitrate, audio_bitrate)
-# স্ট্যান্ডার্ড রেজোলিউশন ফরম্যাট ব্যবহার করা হচ্ছে
+# Define desired output resolutions and bitrates (height, video_bitrate, audio_bitrate)
 RESOLUTIONS = [
-    (360, 640, '800k', '96k'),
-    (480, 854, '1400k', '128k'),
-    (720, 1280, '2800k', '128k') # Assuming input is at least 720p
+    (360, '800k', '96k'),
+    (480, '1400k', '128k'),
+    (720, '2800k', '128k') # যদি মূল ভিডিও 720p বা তার বেশি হয়
 ]
-FFMPEG_TIMEOUT = 1800 # 30 minutes per resolution
+FFMPEG_TIMEOUT = 1800 # Timeout for each ffmpeg command in seconds (30 minutes)
 
 # === State Management Files ===
+# These now represent the state of the *last* processed video
 PROCESSING_LOCK_FILE = os.path.join(BASE_DIR, '.processing.lock')
 HLS_READY_FILE = os.path.join(HLS_DIR, '.hls_ready')
-DOWNLOAD_COMPLETE_FILE = os.path.join(DOWNLOAD_DIR, '.download_complete')
 PROCESSING_ERROR_FILE = os.path.join(BASE_DIR, '.processing.error')
+# .download_complete is removed
 
 # === Helper Functions ===
 
 def ensure_dir(directory):
+    """Creates a directory if it doesn't exist."""
     if not os.path.exists(directory):
         try:
             os.makedirs(directory)
@@ -55,112 +55,58 @@ def ensure_dir(directory):
             logging.error(f"Failed to create directory {directory}: {e}")
             raise
 
-def cleanup_previous_run():
-    """Removes old state files and directories before starting."""
-    files_to_remove = [PROCESSING_LOCK_FILE, HLS_READY_FILE, DOWNLOAD_COMPLETE_FILE, PROCESSING_ERROR_FILE]
-    dirs_to_remove = [HLS_DIR, DOWNLOAD_DIR] # Remove HLS and downloads dir for a clean run
-
-    for file_path in files_to_remove:
-        if os.path.exists(file_path):
+def clear_previous_state():
+    """Removes old state files and HLS data before processing a new video."""
+    logging.info("Clearing previous state files and HLS directory...")
+    files_to_remove = [PROCESSING_LOCK_FILE, HLS_READY_FILE, PROCESSING_ERROR_FILE]
+    for f_path in files_to_remove:
+        if os.path.exists(f_path):
             try:
-                os.remove(file_path)
-                logging.info(f"Removed previous state file: {file_path}")
+                os.remove(f_path)
+                logging.info(f"Removed state file: {f_path}")
             except OSError as e:
-                logging.warning(f"Could not remove previous state file {file_path}: {e}")
+                logging.warning(f"Could not remove state file {f_path}: {e}")
 
-    for dir_path in dirs_to_remove:
-        if os.path.exists(dir_path):
-            try:
-                shutil.rmtree(dir_path) # Use shutil.rmtree for directories
-                logging.info(f"Removed previous directory: {dir_path}")
-            except OSError as e:
-                logging.warning(f"Could not remove previous directory {dir_path}: {e}")
-
-    # Recreate necessary directories after cleanup
-    ensure_dir(STATIC_DIR)
-    ensure_dir(HLS_DIR)
-    ensure_dir(DOWNLOAD_DIR)
-
+    if os.path.exists(HLS_DIR):
+        try:
+            # Remove everything inside HLS_DIR but not the directory itself
+            for item in os.listdir(HLS_DIR):
+                item_path = os.path.join(HLS_DIR, item)
+                if os.path.isdir(item_path):
+                    shutil.rmtree(item_path)
+                else:
+                    os.remove(item_path)
+            logging.info(f"Cleared contents of HLS directory: {HLS_DIR}")
+        except Exception as e:
+            logging.error(f"Could not clear HLS directory {HLS_DIR}: {e}")
+    else:
+        ensure_dir(HLS_DIR) # Ensure it exists if it was somehow deleted
 
 def check_ffmpeg():
+    """Checks if ffmpeg is installed and accessible."""
     try:
-        # Use -loglevel error to suppress verbose output unless there's an error
-        result = subprocess.run(['ffmpeg', '-version', '-loglevel', 'error'], check=True, capture_output=True, text=True, timeout=10)
+        result = subprocess.run(['ffmpeg', '-version'], check=True, capture_output=True, text=True, timeout=10)
         logging.info("ffmpeg check successful.")
         return True
     except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
         error_msg = f"ffmpeg not found or failed check: {e}"
-        if isinstance(e, subprocess.CalledProcessError):
-            error_msg += f"\nSTDERR: {e.stderr}"
         logging.error(error_msg)
         try:
+            # Write error to file so the main page can display it
             with open(PROCESSING_ERROR_FILE, 'w') as f:
                 f.write(f"Fatal Error: ffmpeg is required but not found or not working.\nDetails: {e}")
         except IOError as io_err:
              logging.error(f"Failed to write ffmpeg error to file: {io_err}")
         return False
 
-def download_video(url, dest_path):
-    dest_dir = os.path.dirname(dest_path)
-    # ensure_dir(dest_dir) # Called in cleanup
-
-    if os.path.exists(DOWNLOAD_COMPLETE_FILE):
-         logging.info("Download marker file found. Skipping download as cleanup wasn't intended.")
-         if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0:
-             return True
-         else:
-             logging.warning(f"Marker file exists but video file '{dest_path}' is missing. Re-running.")
-             # Proceed to download if marker exists but file doesn't (marker should be removed by cleanup)
-
-    logging.info(f"Starting download from URL to {dest_path}...")
-    logging.warning("Facebook URLs might be temporary and could expire.")
-    try:
-        # if os.path.exists(dest_path): os.remove(dest_path) # Cleanup should handle this
-
-        with requests.get(url, stream=True, timeout=60) as r: # Increased timeout slightly
-            r.raise_for_status()
-            total_size = int(r.headers.get('content-length', 0))
-            bytes_downloaded = 0
-            start_time = time.time()
-            logging.info(f"Downloading {'{:.2f}'.format(total_size / (1024*1024)) if total_size > 0 else 'unknown size'} MB...")
-
-            with open(dest_path, 'wb') as f:
-                for chunk in r.iter_content(chunk_size=8192*4): # Slightly larger chunk size
-                    if chunk: # filter out keep-alive new chunks
-                        f.write(chunk)
-                        bytes_downloaded += len(chunk)
-
-            end_time = time.time()
-            if bytes_downloaded == 0 and total_size != 0: # Check if nothing was downloaded
-                 raise ValueError(f"Downloaded 0 bytes but content-length was {total_size}.")
-            if os.path.exists(dest_path) and os.path.getsize(dest_path) == 0 and bytes_downloaded > 0:
-                raise ValueError("Downloaded file is empty despite receiving bytes.")
-
-            download_duration = end_time - start_time
-            download_speed = (bytes_downloaded / (1024*1024)) / (download_duration + 1e-6) # Avoid division by zero
-            logging.info(f"Download complete ({bytes_downloaded / (1024*1024):.2f} MB) in {download_duration:.2f}s ({download_speed:.2f} MB/s).")
-
-        with open(DOWNLOAD_COMPLETE_FILE, 'w') as f: f.write(time.strftime("%Y-%m-%d %H:%M:%S"))
-        return True
-
-    except requests.exceptions.RequestException as e:
-        error_msg = f"Download failed (Network/HTTP Error): {e}"
-    except (IOError, ValueError, Exception) as e:
-        error_msg = f"Download failed (File/System/Other Error): {e}"
-
-    logging.error(error_msg)
-    try:
-        with open(PROCESSING_ERROR_FILE, 'w') as f: f.write(error_msg)
-    except IOError as io_err: logging.error(f"Failed to write download error to file: {io_err}")
-    if os.path.exists(dest_path):
-        try: os.remove(dest_path)
-        except OSError as e: logging.warning(f"Could not remove failed download artifact {dest_path}: {e}")
-    return False
+def allowed_file(filename):
+    """Checks if the uploaded file extension is allowed."""
+    return '.' in filename and \
+           filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 def transcode_to_hls(input_path, output_base_dir, resolutions):
-    if os.path.exists(HLS_READY_FILE):
-        logging.info("HLS ready marker file found. Skipping transcoding.")
-        return True
+    """Transcodes video to HLS format for multiple resolutions."""
+    # HLS_READY_FILE check is removed here, assumes this is called only when needed
 
     if not os.path.exists(input_path) or os.path.getsize(input_path) == 0:
         error_msg = f"Input video file not found or is empty: {input_path}"
@@ -169,50 +115,43 @@ def transcode_to_hls(input_path, output_base_dir, resolutions):
         return False
 
     logging.info(f"Starting HLS transcoding from {input_path} into {output_base_dir}...")
-    # ensure_dir(output_base_dir) # Called in cleanup
-
+    ensure_dir(output_base_dir) # Ensure HLS dir exists
     master_playlist_content = "#EXTM3U\n#EXT-X-VERSION:3\n"
     ffmpeg_commands = []
     resolution_details_for_master = []
 
-    # Prepare ffmpeg commands for each resolution
-    for height, width, v_bitrate, a_bitrate in resolutions:
+    # Prepare ffmpeg commands
+    for height, v_bitrate, a_bitrate in resolutions:
         res_output_dir = os.path.join(output_base_dir, str(height))
-        ensure_dir(res_output_dir) # Ensure sub-directory exists
-        # Use relative path for playlist reference in master
-        relative_playlist_path = f'{height}/playlist.m3u8'
-        segment_filename_pattern = os.path.join(res_output_dir, 'segment%05d.ts') # Use more digits for longer videos
+        ensure_dir(res_output_dir)
+        relative_playlist_path = os.path.join(str(height), 'playlist.m3u8') # Relative path for master playlist
+        segment_path_pattern = os.path.join(res_output_dir, 'segment%03d.ts')
         absolute_playlist_path = os.path.join(res_output_dir, 'playlist.m3u8')
 
         cmd = [
-            'ffmpeg', '-hide_banner', '-y', # Hide banner, overwrite output without asking
-            '-i', input_path,
-            '-vf', f'scale={width}:{height}', # Use fixed width and height
-            '-c:v', 'libx264', '-preset', 'veryfast', # Faster encoding preset
-            '-profile:v', 'baseline', # Baseline profile for broader compatibility
-            '-level', '3.1',          # Level compatible with many devices
-            '-crf', '23',             # Constant Rate Factor (quality vs size)
-            '-b:v', v_bitrate, '-maxrate', v_bitrate, '-bufsize', f'{int(v_bitrate[:-1])*2}k', # Bitrate control
-            '-c:a', 'aac', '-ac', '2', '-ar', '44100', '-b:a', a_bitrate, # Audio settings (use 44.1kHz)
+            'ffmpeg', '-i', input_path,
+            '-vf', f'scale=-2:{height}',
+            '-c:v', 'libx264', '-crf', '23', '-preset', 'veryfast', # Consider 'fast' or 'medium' for better quality/size ratio if speed isn't critical
+            '-b:v', v_bitrate, '-maxrate', v_bitrate, '-bufsize', f'{int(v_bitrate[:-1])*2}k',
+            '-c:a', 'aac', '-ar', '48000', '-b:a', a_bitrate,
             '-f', 'hls',
-            '-hls_time', '4',           # Shorter segment duration (e.g., 4 seconds)
-            '-hls_playlist_type', 'vod', # Indicate it's Video on Demand
-            '-hls_list_size', '0',        # Keep all segments in the playlist (for VOD)
-            '-hls_segment_filename', segment_filename_pattern,
-            # '-hls_flags', 'delete_segments', # Don't delete segments for VOD replay
+            '-hls_time', '6',        # Segment duration in seconds
+            '-hls_list_size', '0',   # Keep all segments in the playlist
+            '-hls_segment_filename', segment_path_pattern,
+            '-hls_flags', 'delete_segments', # Don't append, start fresh
             absolute_playlist_path
         ]
         ffmpeg_commands.append({'cmd': cmd, 'height': height})
-        bandwidth = int(v_bitrate[:-1]) * 1000 + int(a_bitrate[:-1]) * 1000
+        bandwidth = int(v_bitrate[:-1]) * 1000 + int(a_bitrate[:-1]) * 1000 # Approximate bandwidth
         resolution_details_for_master.append({
             'bandwidth': bandwidth,
-            'width': width,
             'height': height,
             'playlist_path': relative_playlist_path
         })
 
-    # Execute ffmpeg commands sequentially
+    # Execute ffmpeg commands
     start_time_total = time.time()
+    success = True
     for item in ffmpeg_commands:
         cmd = item['cmd']
         height = item['height']
@@ -221,42 +160,54 @@ def transcode_to_hls(input_path, output_base_dir, resolutions):
         start_time_res = time.time()
         try:
             result = subprocess.run(
-                cmd, check=True, capture_output=True, text=True, timeout=FFMPEG_TIMEOUT, encoding='utf-8'
+                cmd, check=True, capture_output=True, text=True, timeout=FFMPEG_TIMEOUT
             )
             end_time_res = time.time()
             logging.info(f"ffmpeg finished successfully for {height}p in {end_time_res - start_time_res:.2f}s.")
-            logging.debug(f"ffmpeg output for {height}p:\n{result.stderr}") # Log stderr for info
+            # Log stderr for potential warnings even on success
+            if result.stderr:
+                 logging.debug(f"ffmpeg stderr for {height}p:\n{result.stderr[-1000:]}") # Log last part of stderr
         except subprocess.CalledProcessError as e:
             error_msg = (f"Transcoding failed for {height}p (ffmpeg exit code {e.returncode}).\n"
+                         f"Input: {input_path}\n"
                          f"Command: {' '.join(e.cmd)}\n"
-                         f"STDERR:\n{e.stderr}")
+                         f"STDERR (last 1000 chars):\n...{e.stderr[-1000:]}")
             logging.error(error_msg)
             with open(PROCESSING_ERROR_FILE, 'w') as f: f.write(error_msg)
-            return False
+            success = False
+            break # Stop processing other resolutions if one fails
         except subprocess.TimeoutExpired as e:
-            error_msg = f"Transcoding timed out for {height}p after {FFMPEG_TIMEOUT} seconds.\nCommand: {' '.join(e.cmd)}"
+            error_msg = (f"Transcoding timed out for {height}p after {FFMPEG_TIMEOUT} seconds.\n"
+                         f"Input: {input_path}\n"
+                         f"Command: {' '.join(e.cmd)}")
             logging.error(error_msg)
             with open(PROCESSING_ERROR_FILE, 'w') as f: f.write(error_msg)
-            return False
+            success = False
+            break
         except Exception as e:
-            error_msg = f"Unexpected error during transcoding for {height}p: {e}"
+            error_msg = (f"Unexpected error during transcoding for {height}p: {e}\n"
+                         f"Input: {input_path}")
             logging.error(error_msg, exc_info=True)
             with open(PROCESSING_ERROR_FILE, 'w') as f: f.write(error_msg)
-            return False
+            success = False
+            break
 
-    # Create master playlist with corrected RESOLUTION format
-    logging.info("All resolutions transcoded.")
+    if not success:
+        logging.error("Aborting HLS generation due to ffmpeg error.")
+        return False
+
+    # Create master playlist if all transcodes succeeded
+    logging.info("All resolutions transcoded successfully.")
     for detail in resolution_details_for_master:
-        # Using standard WIDTHxHEIGHT format
-        master_playlist_content += f'#EXT-X-STREAM-INF:BANDWIDTH={detail["bandwidth"]},RESOLUTION={detail["width"]}x{detail["height"]}\n'
+        master_playlist_content += f'#EXT-X-STREAM-INF:BANDWIDTH={detail["bandwidth"]},RESOLUTION=x{detail["height"]}\n' # Assuming width is variable
         master_playlist_content += f'{detail["playlist_path"]}\n'
 
     master_playlist_path = os.path.join(output_base_dir, MASTER_PLAYLIST_NAME)
     try:
         with open(master_playlist_path, 'w') as f:
             f.write(master_playlist_content)
-        logging.info(f"Master playlist created: {master_playlist_path}")
-        # Create ready marker only after master playlist is written
+        logging.info(f"Master playlist created successfully at {master_playlist_path}")
+        # Create the ready marker only after the master playlist is written
         with open(HLS_READY_FILE, 'w') as f:
              f.write(time.strftime("%Y-%m-%d %H:%M:%S"))
         logging.info("HLS processing complete. Ready marker created.")
@@ -264,212 +215,226 @@ def transcode_to_hls(input_path, output_base_dir, resolutions):
         logging.info(f"Total transcoding time: {end_time_total - start_time_total:.2f}s")
         return True
     except IOError as e:
-        error_msg = f"Failed to write master playlist or ready file: {e}"
+        error_msg = f"Failed to write master playlist or ready marker: {e}"
         logging.error(error_msg)
         with open(PROCESSING_ERROR_FILE, 'w') as f: f.write(error_msg)
         return False
 
-def run_processing_job():
-    """Main job: clean, check ffmpeg, download, transcode."""
-    # Check lock file robustly
-    if os.path.exists(PROCESSING_LOCK_FILE):
-        try:
-            with open(PROCESSING_LOCK_FILE, 'r') as f:
-                start_time_str = f.read().split(': ')[-1]
-                # Optional: Check if lock file is too old, indicating a stale process
-                logging.warning(f"Lock file found (Processing started around {start_time_str}). Assuming another process is active or failed.")
-        except Exception as e:
-             logging.warning(f"Lock file found but couldn't read start time: {e}. Assuming process is active/failed.")
+def run_processing_job(uploaded_video_path):
+    """The main job function to transcode the uploaded video, run in a thread."""
+    # Lock file is created *before* calling this thread now
+    logging.info(f"Processing job started for: {uploaded_video_path}")
 
-        if os.path.exists(HLS_READY_FILE):
-             logging.info("HLS already ready, ignoring lock file and exiting processing thread.")
-             if os.path.exists(PROCESSING_LOCK_FILE): # Clean up lock if HLS is ready
-                 try: os.remove(PROCESSING_LOCK_FILE)
-                 except OSError as e: logging.warning(f"Could not remove lock file even though HLS is ready: {e}")
-             return
-        else:
-            # HLS not ready, lock exists - let the assumed process finish or timeout
-            logging.warning("HLS not ready and lock file exists. Will not start new process.")
-            return
-
-    logging.info("Starting new video processing job...")
-    lock_acquired = False
     try:
-        # --- Perform Cleanup ---
-        cleanup_previous_run()
-        # --- Cleanup Done ---
-
-        # --- Acquire Lock ---
-        ensure_dir(BASE_DIR) # Ensure base dir exists for lock file
-        with open(PROCESSING_LOCK_FILE, 'w') as f:
-            f.write(f'Processing started at: {time.strftime("%Y-%m-%d %H:%M:%S")}')
-        lock_acquired = True
-        logging.info(f"Created processing lock file: {PROCESSING_LOCK_FILE}")
-        # --- Lock Acquired ---
-
-        # --- Start Processing Steps ---
         if not check_ffmpeg():
-            logging.error("ffmpeg check failed. Aborting.")
-            # Error file written by check_ffmpeg()
-            return # Exit thread
+            logging.error("ffmpeg check failed inside processing job. Aborting.")
+            # Error file should have been created by check_ffmpeg
+            return # Exit the thread
 
-        download_path = os.path.join(DOWNLOAD_DIR, DOWNLOADED_FILENAME)
-        if not download_video(VIDEO_URL, download_path):
-            logging.error("Download step failed. Aborting.")
-            # Error file written by download_video()
-            return # Exit thread
-
-        if not transcode_to_hls(input_path=download_path,
-                                output_base_dir=HLS_DIR,
-                                resolutions=RESOLUTIONS):
-            logging.error("Transcoding step failed. Aborting.")
-            # Error file written by transcode_to_hls()
-            return # Exit thread
-        # --- Processing Steps Done ---
+        if not transcode_to_hls(uploaded_video_path, HLS_DIR, RESOLUTIONS):
+            logging.error("Transcoding step failed.")
+            # transcode_to_hls should have written to PROCESSING_ERROR_FILE
+            return # Exit the thread
 
         logging.info("Processing job completed successfully.")
-        # Remove lock file on successful completion
-        if lock_acquired:
-            try:
-                os.remove(PROCESSING_LOCK_FILE)
-                logging.info(f"Removed processing lock file on success: {PROCESSING_LOCK_FILE}")
-                lock_acquired = False
-            except OSError as e:
-                logging.error(f"Failed to remove lock file on success: {e}")
-
 
     except Exception as e:
-        error_msg = f"Critical unexpected error in processing job: {e}"
+        error_msg = f"Critical unexpected error in processing job for {uploaded_video_path}: {e}"
         logging.error(error_msg, exc_info=True)
         try:
-            # Ensure error file reflects the critical failure
             with open(PROCESSING_ERROR_FILE, 'w') as f: f.write(error_msg)
         except IOError as io_err: logging.error(f"Failed to write critical error to file: {io_err}")
+
     finally:
-        # Ensure lock file is removed if an *uncaught* exception occurred *after* acquiring it
-        # Note: Specific failures in download/transcode steps handle their errors and return early.
-        # This finally block might be redundant if errors are handled well, but acts as a safeguard.
-        # Consider carefully if you want the lock removed on *any* error.
-        # If the process might be recoverable or needs inspection, leaving the lock might be desired.
-        # Current logic removes lock only on success. If an error occurred, the lock remains.
-         pass
+        # Remove the processing lock file regardless of success or failure
+        if os.path.exists(PROCESSING_LOCK_FILE):
+            try:
+                os.remove(PROCESSING_LOCK_FILE)
+                logging.info(f"Removed processing lock file: {PROCESSING_LOCK_FILE}")
+            except OSError as e:
+                logging.error(f"Failed to remove processing lock file: {e}")
+        # Clean up the uploaded source file after processing (optional)
+        # if os.path.exists(uploaded_video_path):
+        #     try:
+        #         os.remove(uploaded_video_path)
+        #         logging.info(f"Removed uploaded source file: {uploaded_video_path}")
+        #     except OSError as e:
+        #         logging.warning(f"Could not remove uploaded source file {uploaded_video_path}: {e}")
 
 
 # === Flask Routes ===
 
-@app.route('/')
+@app.route('/', methods=['GET'])
 def index():
-    """Serves the main HTML page displaying status and video player."""
+    """Serves the main page: upload form or video player based on state."""
     error_message = None
-    processing_status = "idle" # States: idle, processing, ready, error
+    is_processing = False
+    is_hls_ready = os.path.exists(HLS_READY_FILE)
 
     if os.path.exists(PROCESSING_ERROR_FILE):
         try:
             with open(PROCESSING_ERROR_FILE, 'r') as f:
                 error_message = f.read()
-            processing_status = "error"
-            logging.warning(f"Status: Error file found at {PROCESSING_ERROR_FILE}")
+            logging.warning(f"Found error file: {PROCESSING_ERROR_FILE}")
+            # Keep the error file until the next successful processing
         except Exception as e:
             error_message = f"Could not read error file: {e}"
-            processing_status = "error" # Treat as error if file exists but unreadable
             logging.error(error_message)
 
-    elif os.path.exists(HLS_READY_FILE):
-        processing_status = "ready"
-        logging.info("Status: HLS ready marker found.")
-        # Clean up lock file if HLS is ready but lock somehow persists
-        if os.path.exists(PROCESSING_LOCK_FILE):
+    # Check for processing lock *after* checking for errors
+    if not error_message and os.path.exists(PROCESSING_LOCK_FILE):
+        is_processing = True
+        logging.info("Processing lock file exists -> Status: Processing")
+
+    # Determine which template to render
+    if is_hls_ready and not is_processing and not error_message:
+        # Video is ready to be played
+        logging.info("Rendering index.html (Player)")
+        return render_template('index.html', hls_ready=True, processing=False, error=None)
+    elif is_processing:
+        # Video is currently being processed
+        logging.info("Rendering index.html (Processing)")
+        # Pass processing=True to index.html which can show a message
+        return render_template('index.html', hls_ready=False, processing=True, error=None)
+    elif error_message:
+        # An error occurred during the last processing attempt
+        logging.info("Rendering upload.html (Error occurred)")
+        # Show the upload form again, along with the error
+        return render_template('upload.html', error=error_message)
+    else:
+        # No video processed yet, or previous one finished/failed without leaving HLS ready
+        logging.info("Rendering upload.html (Ready for upload)")
+        return render_template('upload.html', error=None)
+
+
+@app.route('/upload', methods=['POST'])
+def upload_file():
+    """Handles the video file upload."""
+    if 'video' not in request.files:
+        flash('No file part')
+        return redirect(request.url) # Redirect back to the upload page implicitly via '/'
+
+    file = request.files['video']
+    if file.filename == '':
+        flash('No selected file')
+        return redirect(url_for('index'))
+
+    if file and allowed_file(file.filename):
+        # Clear previous state before starting new upload processing
+        clear_previous_state()
+
+        # Create necessary directories
+        ensure_dir(UPLOAD_DIR)
+        ensure_dir(STATIC_DIR)
+        ensure_dir(HLS_DIR)
+
+        # Save the uploaded file
+        original_filename = file.filename
+        file_ext = original_filename.rsplit('.', 1)[1].lower()
+        # Use a fixed name for simplicity, prevents needing dynamic paths in transcode
+        # If handling multiple users/videos simultaneously, use unique names (e.g., uuid)
+        save_path = os.path.join(UPLOAD_DIR, f"{UPLOADED_FILENAME}.{file_ext}")
+
+        try:
+            if os.path.exists(save_path):
+                 logging.warning(f"Removing existing upload file: {save_path}")
+                 os.remove(save_path)
+            file.save(save_path)
+            logging.info(f"File uploaded successfully and saved to {save_path}")
+
+            # Create the lock file *before* starting the thread
             try:
-                 os.remove(PROCESSING_LOCK_FILE)
-                 logging.warning("Removed orphan lock file as HLS is ready.")
-            except OSError as e:
-                 logging.warning(f"Could not remove orphan lock file: {e}")
-
-    elif os.path.exists(PROCESSING_LOCK_FILE):
-        processing_status = "processing"
-        logging.info("Status: Processing lock file found, HLS not ready.")
-
-    else: # No error, not ready, no lock -> Should be idle or starting
-        # Check if thread needs starting (it might have died unexpectedly without cleanup)
-        if not (processing_thread and processing_thread.is_alive()):
-             logging.warning("Status: Idle/Unknown. No state files found and thread not alive. Attempting to restart processing.")
-             start_processing_thread() # Attempt to restart
-             processing_status = "processing" # Assume it will start
-        else:
-             # This state should ideally not be reached if locking is correct
-             logging.warning("Status: Ambiguous - No state files, but processing thread is alive.")
-             processing_status = "processing" # Report as processing
-             error_message = "Server state is ambiguous (thread alive, no lock file)."
+                 with open(PROCESSING_LOCK_FILE, 'w') as f:
+                     f.write(f'Processing started at: {time.strftime("%Y-%m-%d %H:%M:%S")} for {original_filename}')
+                 logging.info(f"Created processing lock file: {PROCESSING_LOCK_FILE}")
+            except IOError as e:
+                 flash(f"Error creating lock file: {e}")
+                 logging.error(f"Error creating lock file: {e}")
+                 # Consider cleaning up the uploaded file here
+                 return redirect(url_for('index'))
 
 
-    logging.info(f"Rendering index with status: {processing_status}")
-    return render_template('index.html',
-                           status=processing_status, # Pass single status string
-                           error=error_message)
+            # Start the transcoding process in a background thread
+            logging.info("Starting background processing thread...")
+            processing_thread = threading.Thread(
+                target=run_processing_job,
+                args=(save_path,), # Pass the saved file path
+                name="ProcessingThread",
+                daemon=True # Allows app to exit even if thread is running (use False if job must finish)
+            )
+            processing_thread.start()
+
+            flash(f'Upload successful! "{original_filename}" is now processing.')
+            # Redirect to index, which will show the "Processing" status
+            return redirect(url_for('index'))
+
+        except Exception as e:
+            flash(f'Error saving or processing file: {e}')
+            logging.error(f"Error during file save or thread start: {e}", exc_info=True)
+            # Clean up lock file if it was created
+            if os.path.exists(PROCESSING_LOCK_FILE): os.remove(PROCESSING_LOCK_FILE)
+            return redirect(url_for('index'))
+
+    else:
+        flash('Invalid file type. Allowed types are: ' + ', '.join(ALLOWED_EXTENSIONS))
+        return redirect(url_for('index'))
+
 
 @app.route('/hls/<path:filename>')
 def serve_hls_files(filename):
-    """Serves HLS playlist and segment files safely."""
-    hls_directory = os.path.abspath(HLS_DIR) # Use absolute path for security check
-    safe_filename = filename.replace('../', '').lstrip('/') # Basic sanitization
-    requested_path = os.path.abspath(os.path.join(hls_directory, safe_filename))
-
-    # Security Check: Ensure the requested path is within the HLS directory
-    if not requested_path.startswith(hls_directory):
-        logging.warning(f"Directory traversal attempt blocked for: {filename} -> {requested_path}")
+    """Serves HLS playlist and segment files (.m3u8, .ts)."""
+    hls_directory = HLS_DIR
+    # Security check: Prevent accessing files outside HLS_DIR
+    if '..' in filename or filename.startswith('/'):
+        logging.warning(f"Directory traversal attempt blocked for: {filename}")
         abort(403) # Forbidden
 
-    logging.debug(f"Serving HLS file: {safe_filename} from {hls_directory}")
+    logging.debug(f"Request for HLS file: {filename} from directory {hls_directory}")
+    file_path = os.path.join(hls_directory, filename)
 
-    # Add CORS headers for HLS files
-    response = None
+    # Ensure the requested file is *within* the intended HLS structure
+    # Check if the file exists relative to the HLS_DIR
+    if not os.path.exists(file_path):
+         logging.warning(f"HLS file not found: {file_path}")
+         abort(404)
+
+    # Additional check: Ensure the resolved path is truly under HLS_DIR
+    # This helps prevent issues with symlinks etc. pointing outside
+    abs_hls_dir = os.path.abspath(hls_directory)
+    abs_file_path = os.path.abspath(file_path)
+    if not abs_file_path.startswith(abs_hls_dir):
+         logging.error(f"Security risk: Attempt to access file outside HLS directory resolved path: {abs_file_path}")
+         abort(403) # Forbidden
+
     try:
-        response = send_from_directory(hls_directory, safe_filename, conditional=True)
-        # Add CORS headers - crucial for HLS playback in browsers
-        response.headers['Access-Control-Allow-Origin'] = '*'
-        response.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
-        response.headers['Access-Control-Allow-Headers'] = 'Origin, Content-Type, Accept'
-        return response
+        # Use conditional=True for better caching (sends 304 Not Modified if browser cache is valid)
+        return send_from_directory(hls_directory, filename, conditional=True)
     except FileNotFoundError:
-        logging.warning(f"HLS file not found: {requested_path}")
+        # This check is somewhat redundant due to the os.path.exists above, but good practice
+        logging.warning(f"HLS file not found by send_from_directory: {file_path}")
         abort(404)
     except Exception as e:
-        logging.error(f"Error serving HLS file {safe_filename}: {e}", exc_info=True)
-        abort(500)
+        logging.error(f"Error serving HLS file {filename}: {e}", exc_info=True)
+        abort(500) # Internal Server Error
 
-# === Application Startup & Background Thread ===
-processing_thread = None
 
-def start_processing_thread():
-    """Starts the video processing in a background thread if conditions are met."""
-    global processing_thread
-    if processing_thread and processing_thread.is_alive():
-        logging.info("Processing thread already running.")
-        return
-    if os.path.exists(HLS_READY_FILE):
-        logging.info("HLS already marked as ready. No processing needed.")
-        # Ensure lock is removed if it exists
-        if os.path.exists(PROCESSING_LOCK_FILE):
-            try: os.remove(PROCESSING_LOCK_FILE)
-            except OSError as e: logging.warning(f"Could not remove stale lock file: {e}")
-        return
-    # Check lock file again *just before* starting thread
-    if os.path.exists(PROCESSING_LOCK_FILE):
-         logging.warning("Lock file exists. Preventing start of new processing thread.")
-         return
-
-    logging.info("Starting background processing thread...")
-    processing_thread = threading.Thread(target=run_processing_job, name="ProcessingThread", daemon=True)
-    processing_thread.start()
-
-# --- Start processing immediately when the Flask app starts ---
-# This might run *before* the server is ready for requests in some deployment scenarios,
-# but is generally okay for development/simple deployments.
-start_processing_thread()
+# === Application Startup ===
+# No background thread started automatically on boot anymore
 
 # === Main Execution Block ===
 if __name__ == '__main__':
-    # Note: Setting debug=True with threads can sometimes cause issues or duplicate thread starts.
-    # Keep debug=False for stability, especially when dealing with background tasks.
-    # Use port 8000 or another suitable port.
+    # Check ffmpeg availability on startup
+    if not check_ffmpeg():
+        logging.critical("ffmpeg is required but not available. The application might not function correctly.")
+        # The app will still run, but processing will fail and show an error on the page.
+
+    # Ensure base directories exist on startup
+    ensure_dir(BASE_DIR)
+    ensure_dir(UPLOAD_DIR)
+    ensure_dir(STATIC_DIR)
+    ensure_dir(HLS_DIR)
+
+    # Use port 8000 or another preferred port
+    # Set debug=False for production/stability
     app.run(host='0.0.0.0', port=8000, debug=False)
+        
