@@ -1,488 +1,616 @@
 import os
 import subprocess
-import requests # Note: requests is no longer used but kept for potential future use
+# import requests # Requests আর ব্যবহৃত হচ্ছে না, তবে রাখছি যদি ভবিষ্যতে লাগে
 import threading
 import logging
 import time
 import shutil
-import uuid # <<<--- Unique ID জেনারেট করার জন্য
+import uuid
+import math
 from flask import Flask, render_template, send_from_directory, abort, Response, request, redirect, url_for, flash
 
 # === Logging Configuration ===
+# লগিং কনফিগারেশন: অ্যাপ্লিকেশন এবং প্রসেসিংয়ের ধাপগুলো লগ করার জন্য
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - [%(threadName)s] - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
+    level=logging.INFO, # লগ লেভেল INFO সেট করা হয়েছে
+    format='%(asctime)s - %(levelname)s - [%(threadName)s] - %(message)s', # লগের ফরম্যাট
+    datefmt='%Y-%m-%d %H:%M:%S' # তারিখ ও সময়ের ফরম্যাট
 )
 
 # === Flask App Initialization ===
+# Flask অ্যাপ্লিকেশন ইনিশিয়ালাইজেশন
 app = Flask(__name__)
-app.secret_key = os.urandom(24) # Flash messages need a secret key
+# Flash মেসেজ (যেমন 'Upload successful!') দেখানোর জন্য একটি সিক্রেট কী দরকার
+app.secret_key = os.urandom(24) # প্রতিটি সেশনে ভিন্ন কী অথবা একটি নির্দিষ্ট স্ট্রিং ব্যবহার করুন
 
 # === Configuration Constants ===
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-UPLOAD_DIR = os.path.join(BASE_DIR, 'uploads')
-STATIC_DIR = os.path.join(BASE_DIR, 'static')
-HLS_DIR = os.path.join(STATIC_DIR, 'hls')
-ALLOWED_EXTENSIONS = {'mp4', 'mov', 'avi', 'mkv', 'webm'}
-SOURCE_VIDEO_BASENAME = "source" # আপলোড করা ফাইলের বেস নাম (এক্সটেনশন সহ সেভ হবে)
-MASTER_PLAYLIST_NAME = "master.m3u8"
+# কনফিগারেশন ধ্রুবক: অ্যাপ্লিকেশনটির বিভিন্ন সেটিংস ও পাথ
+BASE_DIR = os.path.dirname(os.path.abspath(__file__)) # অ্যাপ্লিকেশনের মূল ডিরেক্টরি
+UPLOAD_DIR = os.path.join(BASE_DIR, 'uploads') # আপলোড করা ভিডিও ফাইল রাখার ডিরেক্টরি
+STATIC_DIR = os.path.join(BASE_DIR, 'static') # স্ট্যাটিক ফাইল (CSS, JS) রাখার ডিরেক্টরি
+HLS_DIR = os.path.join(STATIC_DIR, 'hls') # জেনারেট করা HLS ফাইল (m3u8, ts) রাখার মূল ডিরেক্টরি
+ALLOWED_EXTENSIONS = {'mp4', 'mov', 'avi', 'mkv', 'webm'} # অনুমোদিত ভিডিও ফাইলের এক্সটেনশন
+SOURCE_VIDEO_BASENAME = "source" # প্রতিটি ভিডিওর আপলোড করা মূল ফাইলের বেস নাম
+MASTER_PLAYLIST_NAME = "master.m3u8" # মাস্টার HLS প্লেলিস্টের ফাইলের নাম
 
-# State filenames (relative to the video's HLS directory)
-PROCESSING_LOCK_FILENAME = ".processing.lock"
-HLS_READY_FILENAME = ".hls_ready"
-PROCESSING_ERROR_FILENAME = ".processing.error"
+# State filenames (relative to each video's HLS directory)
+# প্রতিটি ভিডিওর অবস্থা নির্দেশক ফাইলের নাম
+PROCESSING_LOCK_FILENAME = ".processing.lock" # প্রসেসিং চললে এই ফাইল থাকবে
+HLS_READY_FILENAME = ".hls_ready" # প্রসেসিং সফল হলে এই ফাইল থাকবে
+PROCESSING_ERROR_FILENAME = ".processing.error" # প্রসেসিং ব্যর্থ হলে এই ফাইল থাকবে
 
-
-# Define desired output resolutions and bitrates
+# Define desired output resolutions and bitrates (height, video_bitrate, audio_bitrate)
+# কাঙ্ক্ষিত আউটপুট রেজোলিউশন ও বিটরেট
 RESOLUTIONS = [
-    (360, '800k', '96k'),
-    (480, '1400k', '128k'),
-    (720, '2800k', '128k')
+    (360, '800k', '96k'),    # 360p, 800kbps ভিডিও, 96kbps অডিও
+    (480, '1400k', '128k'),   # 480p, 1400kbps ভিডিও, 128kbps অডিও
+    (720, '2800k', '128k')    # 720p, 2800kbps ভিডিও, 128kbps অডিও
 ]
-FFMPEG_TIMEOUT = 1800 # 30 minutes
+FFMPEG_TIMEOUT = 1800 # প্রতিটি ffmpeg কমান্ডের জন্য সর্বোচ্চ সময় (সেকেন্ডে), 30 মিনিট
 
 # === Helper Functions ===
+# সহায়ক ফাংশনসমূহ
 
 def ensure_dir(directory):
+    """প্রয়োজন অনুযায়ী ডিরেক্টরি তৈরি করে।"""
     if not os.path.exists(directory):
         try:
             os.makedirs(directory)
-            logging.info(f"Created directory: {directory}")
+            logging.info(f"ডিরেক্টরি তৈরি করা হয়েছে: {directory}")
         except OSError as e:
-            logging.error(f"Failed to create directory {directory}: {e}")
-            raise
+            logging.error(f"ডিরেক্টরি তৈরি করতে ব্যর্থ: {directory}: {e}")
+            raise # ত্রুটি পুনরায় রেইজ করুন
 
-def check_ffmpeg():
+def check_command(command_name):
+    """নির্দিষ্ট কমান্ড (ffmpeg বা ffprobe) সিস্টেমে ইনস্টল এবং অ্যাক্সেসযোগ্য কিনা তা পরীক্ষা করে।"""
     try:
-        # Check if ffmpeg is accessible
-        result = subprocess.run(['ffmpeg', '-version'], check=True, capture_output=True, text=True, timeout=10)
-        logging.info("ffmpeg check successful.")
+        # কমান্ডের ভার্সন চেক করার চেষ্টা করে
+        result = subprocess.run([command_name, '-version'], check=True, capture_output=True, text=True, timeout=10)
+        logging.info(f"{command_name} পরীক্ষা সফল।")
         return True
-    except Exception as e:
-        logging.error(f"ffmpeg check failed: {e}")
-        # This is a global check, hard to associate with a specific video ID here
-        # Consider how to handle this if ffmpeg disappears mid-operation
+    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
+        # যদি কমান্ড না পাওয়া যায় বা অন্য কোনো ত্রুটি ঘটে
+        logging.error(f"{command_name} পরীক্ষা ব্যর্থ: {e}")
         return False
 
+def get_video_dimensions(video_path):
+    """ffprobe ব্যবহার করে ভিডিওর প্রস্থ (width) এবং উচ্চতা (height) বের করে।"""
+    # প্রথমে ffprobe আছে কিনা তা নিশ্চিত করুন
+    if not check_command('ffprobe'):
+        logging.error("ভিডিওর ডাইমেনশন পেতে ffprobe প্রয়োজন কিন্তু এটি উপলব্ধ নেই।")
+        return None, None
+
+    # ffprobe কমান্ড তৈরি করুন
+    command = [
+        'ffprobe',
+        '-v', 'error',               # শুধুমাত্র ত্রুটি দেখান
+        '-select_streams', 'v:0',    # প্রথম ভিডিও স্ট্রিম নির্বাচন করুন
+        '-show_entries', 'stream=width,height', # প্রস্থ ও উচ্চতা দেখান
+        '-of', 'csv=s=x:p=0',         # আউটপুট ফরম্যাট: widthxheight
+        video_path                   # ইনপুট ভিডিও ফাইলের পাথ
+    ]
+    try:
+        # কমান্ডটি চালান
+        result = subprocess.run(command, check=True, capture_output=True, text=True, timeout=30)
+        output = result.stdout.strip() # আউটপুট থেকে অতিরিক্ত স্পেস বাদ দিন
+        # আউটপুট পার্স করুন
+        if 'x' in output:
+            width, height = map(int, output.split('x')) # প্রস্থ ও উচ্চতা বের করুন
+            logging.info(f"ভিডিওর ডাইমেনশন সনাক্ত করা হয়েছে ({os.path.basename(video_path)}): {width}x{height}")
+            return width, height
+        else:
+            # যদি আউটপুট প্রত্যাশিত ফরম্যাটে না থাকে
+            logging.error(f"ffprobe আউটপুট থেকে ডাইমেনশন পার্স করা যায়নি: '{output}'")
+            return None, None
+    except subprocess.CalledProcessError as e:
+        # যদি ffprobe কমান্ড ব্যর্থ হয়
+        logging.error(f"ffprobe ব্যর্থ হয়েছে ({video_path}, return code {e.returncode}): {e.stderr}")
+        return None, None
+    except FileNotFoundError:
+        # যদি ffprobe কমান্ড খুঁজে না পাওয়া যায়
+        logging.error("ডাইমেনশন পাওয়ার সময় ffprobe কমান্ড খুঁজে পাওয়া যায়নি।")
+        return None, None
+    except Exception as e:
+        # অন্যান্য অপ্রত্যাশিত ত্রুটি
+        logging.error(f"ভিডিও ডাইমেনশন পেতে ত্রুটি ({video_path}): {e}", exc_info=True)
+        return None, None
+
 def allowed_file(filename):
+    """আপলোড করা ফাইলের এক্সটেনশন অনুমোদিত কিনা তা পরীক্ষা করে।"""
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 def clear_hls_directory_contents(directory_path):
-    """Removes contents of a specific HLS directory before transcoding."""
+    """ট্রান্সকোডিং শুরু করার আগে নির্দিষ্ট HLS ডিরেক্টরির ভিতরের সমস্ত ফাইল ও ফোল্ডার মুছে ফেলে।"""
     if not os.path.isdir(directory_path):
-        logging.warning(f"HLS directory not found for clearing: {directory_path}")
+        logging.warning(f"HLS ডিরেক্টরি মুছে ফেলার জন্য খুঁজে পাওয়া যায়নি: {directory_path}")
         return
-    logging.info(f"Clearing contents of HLS directory: {directory_path}")
+    logging.info(f"HLS ডিরেক্টরির কনটেন্ট মুছে ফেলা হচ্ছে: {directory_path}")
     try:
+        # ডিরেক্টরির ভিতরের প্রতিটি আইটেমের জন্য
         for item in os.listdir(directory_path):
             item_path = os.path.join(directory_path, item)
             try:
+                # যদি আইটেমটি একটি ডিরেক্টরি হয়, তবে সেটি এবং তার ভিতরের সবকিছু মুছে ফেলুন
                 if os.path.isdir(item_path):
                     shutil.rmtree(item_path)
+                # যদি আইটেমটি একটি ফাইল হয়, তবে সেটি মুছে ফেলুন
                 else:
                     os.remove(item_path)
             except Exception as e:
-                logging.error(f"Could not remove item {item_path}: {e}")
+                logging.error(f"আইটেমটি মুছে ফেলা যায়নি {item_path}: {e}")
     except Exception as e:
-        logging.error(f"Could not list or clear directory {directory_path}: {e}")
+        # যদি ডিরেক্টরির তালিকা পেতে বা মুছতে সমস্যা হয়
+        logging.error(f"ডিরেক্টরি তালিকাভুক্ত বা পরিষ্কার করা যায়নি {directory_path}: {e}")
 
+# === Core Processing Functions ===
+# মূল প্রসেসিং ফাংশনসমূহ
 
 def transcode_to_hls(video_id, input_path, output_base_dir, resolutions):
-    """Transcodes video to HLS, specific to a video_id."""
-    # output_base_dir is now specific, e.g., static/hls/video_id
+    """ভিডিওকে HLS ফরম্যাটে ট্রান্সকোড করে এবং মাস্টার প্লেলিস্টে সঠিক রেজোলিউশন ব্যবহার করে।"""
+    error_file_path = os.path.join(output_base_dir, PROCESSING_ERROR_FILENAME) # ত্রুটি ফাইলের পাথ
 
-    if not os.path.exists(input_path) or os.path.getsize(input_path) == 0:
-        error_msg = f"[{video_id}] Input video file not found or is empty: {input_path}"
+    # --- মূল ভিডিওর ডাইমেনশন পান ---
+    original_width, original_height = get_video_dimensions(input_path)
+    if not original_width or not original_height:
+        # যদি ডাইমেনশন না পাওয়া যায়, ত্রুটি লগ করুন এবং ব্যর্থ হোন
+        error_msg = f"[{video_id}] ভিডিও ডাইমেনশন পাওয়া যায়নি ({input_path})। ট্রান্সকোডিং সম্ভব নয়।"
         logging.error(error_msg)
-        # Write error state file within the video's HLS directory
-        error_file_path = os.path.join(output_base_dir, PROCESSING_ERROR_FILENAME)
         try:
             with open(error_file_path, 'w') as f: f.write(error_msg)
         except IOError as e:
-             logging.error(f"[{video_id}] Failed to write error state file {error_file_path}: {e}")
+             logging.error(f"[{video_id}] ডাইমেনশন ত্রুটি ফাইল লিখতে ব্যর্থ: {error_file_path}: {e}")
+        return False
+    # --- ডাইমেনশন পাওয়া শেষ ---
+
+    # ইনপুট ফাইল আছে এবং খালি নয় তা নিশ্চিত করুন
+    if not os.path.exists(input_path) or os.path.getsize(input_path) == 0:
+        error_msg = f"[{video_id}] ইনপুট ভিডিও ফাইল খুঁজে পাওয়া যায়নি বা খালি: {input_path}"
+        logging.error(error_msg)
+        try:
+            with open(error_file_path, 'w') as f: f.write(error_msg)
+        except IOError as e:
+             logging.error(f"[{video_id}] ইনপুট ফাইল ত্রুটি ফাইল লিখতে ব্যর্থ: {error_file_path}: {e}")
         return False
 
-    logging.info(f"[{video_id}] Starting HLS transcoding from {input_path} into {output_base_dir}...")
-    ensure_dir(output_base_dir) # Ensure video specific HLS dir exists
+    logging.info(f"[{video_id}] HLS ট্রান্সকোডিং শুরু হচ্ছে (সোর্স রেজোলিউশন: {original_width}x{original_height}) ফাইল: {input_path} থেকে ডিরেক্টরি: {output_base_dir}...")
+    ensure_dir(output_base_dir) # ভিডিওর নির্দিষ্ট HLS ডিরেক্টরি তৈরি করুন
 
-    master_playlist_content = "#EXTM3U\n#EXT-X-VERSION:3\n"
-    ffmpeg_commands = []
-    resolution_details_for_master = []
+    master_playlist_content = "#EXTM3U\n#EXT-X-VERSION:3\n" # মাস্টার প্লেলিস্টের শুরু
+    ffmpeg_commands = [] # ffmpeg কমান্ডগুলো রাখার তালিকা
+    resolution_details_for_master = [] # মাস্টার প্লেলিস্টের জন্য রেজোলিউশনের তথ্য
 
-    # Prepare ffmpeg commands relative to the video's HLS directory
-    for height, v_bitrate, a_bitrate in resolutions:
-        # Resolution specific dir inside the video's HLS dir
-        res_output_dir = os.path.join(output_base_dir, str(height))
+    # --- প্রতিটি কাঙ্ক্ষিত রেজোলিউশনের জন্য কমান্ড প্রস্তুত করুন এবং প্রস্থ গণনা করুন ---
+    for target_height, v_bitrate, a_bitrate in resolutions:
+        # যদি টার্গেট রেজোলিউশন মূল ভিডিওর চেয়ে বেশি হয়, তবে সেটি বাদ দিন
+        if target_height > original_height + 10: # +10 একটি ছোট মার্জিন
+             logging.warning(f"[{video_id}] {target_height}p বাদ দেওয়া হচ্ছে কারণ এটি মূল উচ্চতা ({original_height}p) থেকে বেশি।")
+             continue
+
+        # মূল অ্যাসপেক্ট রেশিও ব্যবহার করে টার্গেট প্রস্থ গণনা করুন
+        aspect_ratio = original_width / original_height
+        # প্রস্থ গণনা করুন এবং নিশ্চিত করুন এটি একটি জোড় সংখ্যা (ভিডিও কোডেকের জন্য গুরুত্বপূর্ণ)
+        target_width = math.floor(target_height * aspect_ratio / 2.0) * 2
+        if target_width == 0: target_width = 2 # প্রস্থ শূন্য হওয়া এড়ান
+
+        logging.info(f"[{video_id}] গণনা করা টার্গেট রেজোলিউশন: {target_width}x{target_height}")
+
+        # ফাইল ও ডিরেক্টরির পাথ নির্ধারণ করুন
+        res_output_dir = os.path.join(output_base_dir, str(target_height)) # যেমন: static/hls/uuid/360
         ensure_dir(res_output_dir)
+        relative_playlist_path = os.path.join(str(target_height), 'playlist.m3u8') # মাস্টার প্লেলিস্টের সাপেক্ষে পাথ
+        segment_path_pattern = os.path.join(res_output_dir, 'segment%03d.ts') # সেগমেন্ট ফাইলের প্যাটার্ন
+        absolute_playlist_path = os.path.join(res_output_dir, 'playlist.m3u8') # ffmpeg এর জন্য প্লেলিস্টের পাথ
 
-        # Paths relative to the video's HLS directory for the master playlist
-        relative_playlist_path = os.path.join(str(height), 'playlist.m3u8')
-        # Absolute path for ffmpeg segment output
-        segment_path_pattern = os.path.join(res_output_dir, 'segment%03d.ts')
-        # Absolute path for ffmpeg playlist output
-        absolute_playlist_path = os.path.join(res_output_dir, 'playlist.m3u8')
+        # ffmpeg স্কেল ফিল্টার (-2 ব্যবহার করলে ffmpeg স্বয়ংক্রিয়ভাবে প্রস্থ গণনা করে)
+        scale_filter = f'scale=-2:{target_height}'
 
+        # ffmpeg কমান্ড তৈরি করুন
         cmd = [
-            'ffmpeg', '-i', input_path,
-            '-vf', f'scale=-2:{height}',
-            '-c:v', 'libx264', '-crf', '23', '-preset', 'veryfast',
-            '-b:v', v_bitrate, '-maxrate', v_bitrate, '-bufsize', f'{int(v_bitrate[:-1])*2}k',
-            '-c:a', 'aac', '-ar', '48000', '-b:a', a_bitrate,
-            '-f', 'hls',
-            '-hls_time', '6',
-            '-hls_list_size', '0',
-            '-hls_segment_filename', segment_path_pattern,
-            '-hls_flags', 'delete_segments', # Start fresh for this video ID
-            absolute_playlist_path
+            'ffmpeg', '-i', input_path,           # ইনপুট ফাইল
+            '-vf', scale_filter,                 # ভিডিও ফিল্টার (স্কেলিং)
+            '-c:v', 'libx264', '-crf', '23', '-preset', 'veryfast', # ভিডিও কোডেক ও সেটিংস
+            '-b:v', v_bitrate, '-maxrate', v_bitrate, '-bufsize', f'{int(v_bitrate[:-1])*2}k', # ভিডিও বিটরেট কন্ট্রোল
+            '-c:a', 'aac', '-ar', '48000', '-b:a', a_bitrate, # অডিও কোডেক ও সেটিংস
+            '-f', 'hls',                         # আউটপুট ফরম্যাট HLS
+            '-hls_time', '6',                    # প্রতিটি সেগমেন্টের দৈর্ঘ্য (সেকেন্ড)
+            '-hls_list_size', '0',               # প্লেলিস্টে সব সেগমেন্ট রাখুন
+            '-hls_segment_filename', segment_path_pattern, # সেগমেন্ট ফাইলের নাম প্যাটার্ন
+            '-hls_flags', 'delete_segments',     # আগের সেগমেন্ট মুছে নতুন করে শুরু করুন
+            absolute_playlist_path               # আউটপুট প্লেলিস্ট ফাইলের পাথ
         ]
-        ffmpeg_commands.append({'cmd': cmd, 'height': height})
-        bandwidth = int(v_bitrate[:-1]) * 1000 + int(a_bitrate[:-1]) * 1000
-        resolution_details_for_master.append({
+        ffmpeg_commands.append({'cmd': cmd, 'height': target_height}) # কমান্ড তালিকায় যোগ করুন
+        bandwidth = int(v_bitrate[:-1]) * 1000 + int(a_bitrate[:-1]) * 1000 # ব্যান্ডউইথ গণনা (আনুমানিক)
+        resolution_details_for_master.append({ # মাস্টার প্লেলিস্টের জন্য তথ্য সংরক্ষণ করুন
             'bandwidth': bandwidth,
-            'height': height,
-            'playlist_path': relative_playlist_path # Path relative to master playlist
+            'width': target_width,           # গণনা করা প্রস্থ <<<---
+            'height': target_height,         # টার্গেট উচ্চতা
+            'playlist_path': relative_playlist_path # প্লেলিস্টের রিলেটিভ পাথ
         })
+    # --- কমান্ড প্রস্তুত করা শেষ ---
 
-    # Execute ffmpeg commands
-    start_time_total = time.time()
-    success = True
-    error_file_path = os.path.join(output_base_dir, PROCESSING_ERROR_FILENAME)
+    # যদি কোনো উপযুক্ত রেজোলিউশন না পাওয়া যায়
+    if not resolution_details_for_master:
+         error_msg = f"[{video_id}] মূল আকার ({original_width}x{original_height}) এর জন্য কোনো উপযুক্ত রেজোলিউশন পাওয়া যায়নি।"
+         logging.error(error_msg)
+         try:
+            with open(error_file_path, 'w') as f: f.write(error_msg)
+         except IOError as e:
+             logging.error(f"[{video_id}] রেজোলিউশন-নেই ত্রুটি ফাইল লিখতে ব্যর্থ: {error_file_path}: {e}")
+         return False
 
+    # --- ffmpeg কমান্ডগুলো চালান ---
+    start_time_total = time.time() # মোট সময় গণনা শুরু
+    success = True # প্রসেস সফল হয়েছে কিনা তার ফ্ল্যাগ
     for item in ffmpeg_commands:
         cmd = item['cmd']
         height = item['height']
-        logging.info(f"[{video_id}] Running ffmpeg for {height}p...")
-        logging.debug(f"[{video_id}] Command: {' '.join(cmd)}")
-        start_time_res = time.time()
+        logging.info(f"[{video_id}] {height}p এর জন্য ffmpeg চালানো হচ্ছে...")
+        logging.debug(f"[{video_id}] কমান্ড: {' '.join(cmd)}")
+        start_time_res = time.time() # এই রেজোলিউশনের সময় গণনা শুরু
         try:
+            # কমান্ড চালান ও আউটপুট ক্যাপচার করুন
             result = subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=FFMPEG_TIMEOUT)
-            end_time_res = time.time()
-            logging.info(f"[{video_id}] ffmpeg finished successfully for {height}p in {end_time_res - start_time_res:.2f}s.")
+            end_time_res = time.time() # এই রেজোলিউশনের সময় গণনা শেষ
+            logging.info(f"[{video_id}] {height}p এর জন্য ffmpeg সফলভাবে শেষ হয়েছে ({end_time_res - start_time_res:.2f} সেকেন্ড)।")
+            # সফল হলেও stderr লগ করুন (ওয়ার্নিং থাকতে পারে)
             if result.stderr:
-                 logging.debug(f"[{video_id}] ffmpeg stderr for {height}p:\n{result.stderr[-1000:]}")
+                 logging.debug(f"[{video_id}] ffmpeg stderr ({height}p):\n{result.stderr[-1000:]}") # শেষ ১০০০ অক্ষর
         except subprocess.CalledProcessError as e:
-            error_msg = (f"[{video_id}] Transcoding failed for {height}p (ffmpeg exit code {e.returncode}).\n"
-                         f"Input: {input_path}\n"
-                         f"Command: {' '.join(e.cmd)}\n"
-                         f"STDERR (last 1000 chars):\n...{e.stderr[-1000:]}")
+            # যদি ffmpeg কোনো ত্রুটি কোড রিটার্ন করে
+            error_msg = (f"[{video_id}] {height}p এর জন্য ট্রান্সকোডিং ব্যর্থ (ffmpeg exit code {e.returncode})।\n"
+                         f"ইনপুট: {input_path}\n"
+                         f"কমান্ড: {' '.join(e.cmd)}\n"
+                         f"STDERR (শেষ ১০০০ অক্ষর):\n...{e.stderr[-1000:]}")
             logging.error(error_msg)
             try:
-                with open(error_file_path, 'w') as f: f.write(error_msg)
+                with open(error_file_path, 'w') as f: f.write(error_msg) # ত্রুটি ফাইল লিখুন
             except IOError as io_err:
-                logging.error(f"[{video_id}] Failed to write error state file {error_file_path}: {io_err}")
-            success = False
-            break
+                logging.error(f"[{video_id}] ffmpeg ত্রুটি ফাইল লিখতে ব্যর্থ: {error_file_path}: {io_err}")
+            success = False # ফ্ল্যাগ সেট করুন
+            break # পরবর্তী রেজোলিউশন প্রসেস করা বন্ধ করুন
         except subprocess.TimeoutExpired as e:
-            error_msg = (f"[{video_id}] Transcoding timed out for {height}p after {FFMPEG_TIMEOUT} seconds.\n"
-                         f"Input: {input_path}\n"
-                         f"Command: {' '.join(e.cmd)}")
+            # যদি কমান্ডটি টাইমআউট হয়ে যায়
+            error_msg = (f"[{video_id}] {height}p এর জন্য ট্রান্সকোডিং টাইমআউট ({FFMPEG_TIMEOUT} সেকেন্ড)।\n"
+                         f"ইনপুট: {input_path}\n"
+                         f"কমান্ড: {' '.join(e.cmd)}")
             logging.error(error_msg)
             try:
-                with open(error_file_path, 'w') as f: f.write(error_msg)
+                with open(error_file_path, 'w') as f: f.write(error_msg) # ত্রুটি ফাইল লিখুন
             except IOError as io_err:
-                 logging.error(f"[{video_id}] Failed to write error state file {error_file_path}: {io_err}")
-            success = False
-            break
+                 logging.error(f"[{video_id}] টাইমআউট ত্রুটি ফাইল লিখতে ব্যর্থ: {error_file_path}: {io_err}")
+            success = False # ফ্ল্যাগ সেট করুন
+            break # পরবর্তী রেজোলিউশন প্রসেস করা বন্ধ করুন
         except Exception as e:
-            error_msg = f"[{video_id}] Unexpected error during transcoding for {height}p: {e}\nInput: {input_path}"
+            # অন্যান্য অপ্রত্যাশিত ত্রুটি
+            error_msg = f"[{video_id}] {height}p এর জন্য ট্রান্সকোডিংয়ের সময় অপ্রত্যাশিত ত্রুটি: {e}\nইনপুট: {input_path}"
             logging.error(error_msg, exc_info=True)
             try:
-                 with open(error_file_path, 'w') as f: f.write(error_msg)
+                 with open(error_file_path, 'w') as f: f.write(error_msg) # ত্রুটি ফাইল লিখুন
             except IOError as io_err:
-                logging.error(f"[{video_id}] Failed to write error state file {error_file_path}: {io_err}")
-            success = False
-            break
+                logging.error(f"[{video_id}] অপ্রত্যাশিত ত্রুটি ফাইল লিখতে ব্যর্থ: {error_file_path}: {io_err}")
+            success = False # ফ্ল্যাগ সেট করুন
+            break # পরবর্তী রেজোলিউশন প্রসেস করা বন্ধ করুন
+    # --- ffmpeg চালানো শেষ ---
 
+    # যদি কোনো একটি রেজোলিউশন প্রসেস করতে ব্যর্থ হয়
     if not success:
-        logging.error(f"[{video_id}] Aborting HLS generation due to ffmpeg error.")
-        return False
+        logging.error(f"[{video_id}] ffmpeg ত্রুটির কারণে HLS তৈরি বাতিল করা হচ্ছে।")
+        return False # ব্যর্থ রিটার্ন করুন
 
-    # Create master playlist if all transcodes succeeded
-    logging.info(f"[{video_id}] All resolutions transcoded successfully.")
+    # --- মাস্টার প্লেলিস্ট তৈরি করুন (সঠিক RESOLUTION সহ) ---
+    logging.info(f"[{video_id}] সমস্ত রেজোলিউশন সফলভাবে ট্রান্সকোড করা হয়েছে। মাস্টার প্লেলিস্ট তৈরি করা হচ্ছে...")
     for detail in resolution_details_for_master:
-        master_playlist_content += f'#EXT-X-STREAM-INF:BANDWIDTH={detail["bandwidth"]},RESOLUTION=x{detail["height"]}\n'
-        master_playlist_content += f'{detail["playlist_path"]}\n' # These paths are relative to the master playlist
+        # গণনা করা প্রস্থ ও উচ্চতা ব্যবহার করুন
+        master_playlist_content += f'#EXT-X-STREAM-INF:BANDWIDTH={detail["bandwidth"]},RESOLUTION={detail["width"]}x{detail["height"]}\n'
+        master_playlist_content += f'{detail["playlist_path"]}\n' # রিলেটিভ পাথ যোগ করুন
 
-    master_playlist_path = os.path.join(output_base_dir, MASTER_PLAYLIST_NAME)
-    ready_file_path = os.path.join(output_base_dir, HLS_READY_FILENAME)
+    master_playlist_path = os.path.join(output_base_dir, MASTER_PLAYLIST_NAME) # মাস্টার ফাইলের পাথ
+    ready_file_path = os.path.join(output_base_dir, HLS_READY_FILENAME) # রেডি ফাইলের পাথ
     try:
+        # মাস্টার প্লেলিস্ট ফাইল লিখুন
         with open(master_playlist_path, 'w') as f:
             f.write(master_playlist_content)
-        logging.info(f"[{video_id}] Master playlist created successfully at {master_playlist_path}")
+        logging.info(f"[{video_id}] মাস্টার প্লেলিস্ট সফলভাবে তৈরি হয়েছে: {master_playlist_path}")
 
-        # Create the ready marker file
+        # রেডি ফাইল তৈরি করুন (প্রসেসিং সফল নির্দেশক)
         with open(ready_file_path, 'w') as f:
              f.write(time.strftime("%Y-%m-%d %H:%M:%S"))
-        logging.info(f"[{video_id}] HLS processing complete. Ready marker created: {ready_file_path}")
-        end_time_total = time.time()
-        logging.info(f"[{video_id}] Total transcoding time: {end_time_total - start_time_total:.2f}s")
-        return True
+        logging.info(f"[{video_id}] HLS প্রসেসিং সম্পন্ন। রেডি মার্কার তৈরি হয়েছে: {ready_file_path}")
+        end_time_total = time.time() # মোট সময় গণনা শেষ
+        logging.info(f"[{video_id}] মোট ট্রান্সকোডিং সময়: {end_time_total - start_time_total:.2f} সেকেন্ড")
+        return True # সফল রিটার্ন করুন
     except IOError as e:
-        error_msg = f"[{video_id}] Failed to write master playlist or ready marker: {e}"
+        # যদি প্লেলিস্ট বা রেডি ফাইল লিখতে সমস্যা হয়
+        error_msg = f"[{video_id}] মাস্টার প্লেলিস্ট বা রেডি মার্কার লিখতে ব্যর্থ: {e}"
         logging.error(error_msg)
-        # Write error state file
         try:
-            with open(error_file_path, 'w') as f: f.write(error_msg)
+            with open(error_file_path, 'w') as f: f.write(error_msg) # ত্রুটি ফাইল লিখুন
         except IOError as io_err:
-             logging.error(f"[{video_id}] Failed to write error state file {error_file_path}: {io_err}")
-        return False
+             logging.error(f"[{video_id}] প্লেলিস্ট লেখা ত্রুটি ফাইল লিখতে ব্যর্থ: {error_file_path}: {io_err}")
+        return False # ব্যর্থ রিটার্ন করুন
+    # --- মাস্টার প্লেলিস্ট তৈরি শেষ ---
 
 
 def run_processing_job(video_id, uploaded_video_path, hls_output_dir):
-    """The main job function to transcode a specific uploaded video."""
-    lock_file_path = os.path.join(hls_output_dir, PROCESSING_LOCK_FILENAME)
-    error_file_path = os.path.join(hls_output_dir, PROCESSING_ERROR_FILENAME)
-    ready_file_path = os.path.join(hls_output_dir, HLS_READY_FILENAME)
+    """নির্দিষ্ট আপলোড করা ভিডিও ট্রান্সকোড করার মূল থ্রেড ফাংশন।"""
+    lock_file_path = os.path.join(hls_output_dir, PROCESSING_LOCK_FILENAME)   # লক ফাইলের পাথ
+    error_file_path = os.path.join(hls_output_dir, PROCESSING_ERROR_FILENAME) # ত্রুটি ফাইলের পাথ
+    ready_file_path = os.path.join(hls_output_dir, HLS_READY_FILENAME)     # রেডি ফাইলের পাথ
 
-    logging.info(f"[{video_id}] Processing job started in thread.")
-    # Lock file should already exist, created by the /upload route
+    logging.info(f"[{video_id}] প্রসেসিং থ্রেড শুরু হয়েছে।")
+    # লক ফাইলটি /upload রুট দ্বারা আগে তৈরি করা উচিত
 
     try:
-        # Clear any previous HLS content for this ID before starting
+        # এই ভিডিও আইডির জন্য আগের HLS কনটেন্ট ও স্টেট ফাইল মুছে ফেলুন
         clear_hls_directory_contents(hls_output_dir)
-        # Also remove potential stale error/ready files from previous runs for this ID
         if os.path.exists(error_file_path): os.remove(error_file_path)
         if os.path.exists(ready_file_path): os.remove(ready_file_path)
 
-        if not check_ffmpeg():
-             # This is a global issue, hard to report per-video reliably here
-             error_msg = f"[{video_id}] ffmpeg check failed. Aborting processing."
+        # ffmpeg উপলব্ধ কিনা তা পরীক্ষা করুন (ffprobe আগে চেক করা হয়েছে)
+        if not check_command('ffmpeg'):
+             error_msg = f"[{video_id}] ffmpeg পরীক্ষা ব্যর্থ। প্রসেসিং বাতিল করা হচ্ছে।"
              logging.critical(error_msg)
              with open(error_file_path, 'w') as f: f.write(error_msg)
-             return # Exit the thread
+             return # থ্রেড থেকে প্রস্থান করুন
 
+        # ট্রান্সকোডিং শুরু করুন (যেখানে ডাইমেনশন গণনা অন্তর্ভুক্ত)
         if not transcode_to_hls(video_id, uploaded_video_path, hls_output_dir, RESOLUTIONS):
-            logging.error(f"[{video_id}] Transcoding step failed.")
-            # transcode_to_hls should have written the error file
-            return # Exit the thread
+            logging.error(f"[{video_id}] ট্রান্সকোডিং ধাপ ব্যর্থ হয়েছে।")
+            # transcode_to_hls ফাংশন ত্রুটি ফাইল লেখার কথা
+            return # থ্রেড থেকে প্রস্থান করুন
 
-        logging.info(f"[{video_id}] Processing job completed successfully.")
+        # যদি সব ঠিক থাকে
+        logging.info(f"[{video_id}] প্রসেসিং সফলভাবে সম্পন্ন হয়েছে।")
 
     except Exception as e:
-        error_msg = f"[{video_id}] Critical unexpected error in processing job: {e}"
+        # যদি থ্রেডে কোনো অপ্রত্যাশিত ত্রুটি ঘটে
+        error_msg = f"[{video_id}] প্রসেসিং থ্রেডে মারাত্মক অপ্রত্যাশিত ত্রুটি: {e}"
         logging.error(error_msg, exc_info=True)
         try:
-            with open(error_file_path, 'w') as f: f.write(error_msg)
-        except IOError as io_err: logging.error(f"[{video_id}] Failed to write critical error to file: {io_err}")
+            with open(error_file_path, 'w') as f: f.write(error_msg) # ত্রুটি ফাইল লিখুন
+        except IOError as io_err: logging.error(f"[{video_id}] মারাত্মক ত্রুটি ফাইল লিখতে ব্যর্থ: {io_err}")
 
     finally:
-        # Remove the processing lock file for this specific video ID
+        # প্রসেসিং সফল বা ব্যর্থ যাই হোক না কেন, নির্দিষ্ট ভিডিওর লক ফাইলটি মুছে ফেলুন
         if os.path.exists(lock_file_path):
             try:
                 os.remove(lock_file_path)
-                logging.info(f"[{video_id}] Removed processing lock file: {lock_file_path}")
+                logging.info(f"[{video_id}] প্রসেসিং লক ফাইল মুছে ফেলা হয়েছে: {lock_file_path}")
             except OSError as e:
-                logging.error(f"[{video_id}] Failed to remove processing lock file: {e}")
-        # Optional: Clean up the source uploaded file after processing
-        # Be careful with this if you might need to reprocess later
+                logging.error(f"[{video_id}] প্রসেসিং লক ফাইল মুছতে ব্যর্থ: {e}")
+        # ঐচ্ছিক: প্রসেসিংয়ের পর আপলোড করা সোর্স ফাইল মুছে ফেলা
         # if os.path.exists(uploaded_video_path):
         #     try:
         #         os.remove(uploaded_video_path)
-        #         logging.info(f"[{video_id}] Removed uploaded source file: {uploaded_video_path}")
+        #         logging.info(f"[{video_id}] আপলোড করা সোর্স ফাইল মুছে ফেলা হয়েছে: {uploaded_video_path}")
         #     except OSError as e:
-        #         logging.warning(f"[{video_id}] Could not remove source file {uploaded_video_path}: {e}")
+        #         logging.warning(f"[{video_id}] সোর্স ফাইল মুছতে ব্যর্থ {uploaded_video_path}: {e}")
 
 
 # === Flask Routes ===
+# Flask অ্যাপ্লিকেশন রুট (URL পাথ এবং সংশ্লিষ্ট ফাংশন)
 
 @app.route('/', methods=['GET'])
 def index():
-    """Serves the main upload page."""
-    logging.info("Rendering index.html (upload form)")
-    # This page now only shows the upload form and potentially global messages
-    return render_template('index.html')
+    """মূল পাতা দেখায়, যেখানে ভিডিও আপলোড করার ফর্ম থাকে।"""
+    logging.info("ইনডেক্স পেজ রেন্ডার করা হচ্ছে (আপলোড ফর্ম)।")
+    return render_template('index.html') # index.html টেমপ্লেট দেখান
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
-    """Handles the video file upload, assigns ID, starts processing."""
+    """ভিডিও ফাইল আপলোড হ্যান্ডেল করে, আইডি নির্ধারণ করে এবং প্রসেসিং শুরু করে।"""
+    # চেক করুন ফাইল রিকোয়েস্টে আছে কিনা
     if 'video' not in request.files:
-        flash('কোন ফাইল অংশ নেই।')
-        return redirect(url_for('index'))
+        flash('কোন ফাইল অংশ নেই।') # ব্যবহারকারীকে মেসেজ দেখান
+        return redirect(url_for('index')) # ইনডেক্স পেজে ফেরত পাঠান
 
-    file = request.files['video']
+    file = request.files['video'] # ফাইল অবজেক্ট পান
+    # যদি ব্যবহারকারী ফাইল সিলেক্ট না করে সাবমিট করে
     if file.filename == '':
         flash('কোন ফাইল নির্বাচন করা হয়নি।')
         return redirect(url_for('index'))
 
+    # যদি ফাইল থাকে এবং এক্সটেনশন অনুমোদিত হয়
     if file and allowed_file(file.filename):
-        original_filename = file.filename
-        file_ext = original_filename.rsplit('.', 1)[1].lower()
-        video_id = str(uuid.uuid4()) # Generate unique ID
-        logging.info(f"Upload received for '{original_filename}', assigned ID: {video_id}")
+        original_filename = file.filename # আসল ফাইলের নাম
+        file_ext = original_filename.rsplit('.', 1)[1].lower() # ফাইলের এক্সটেনশন
+        video_id = str(uuid.uuid4()) # ইউনিক ভিডিও আইডি তৈরি করুন
+        logging.info(f"আপলোড গৃহীত হয়েছে '{original_filename}', আইডি নির্ধারিত: {video_id}")
 
-        # Define paths specific to this video ID
-        video_upload_dir = os.path.join(UPLOAD_DIR, video_id)
-        video_hls_dir = os.path.join(HLS_DIR, video_id)
-        save_path = os.path.join(video_upload_dir, f"{SOURCE_VIDEO_BASENAME}.{file_ext}")
-        lock_file_path = os.path.join(video_hls_dir, PROCESSING_LOCK_FILENAME)
+        # এই ভিডিওর জন্য নির্দিষ্ট পাথ নির্ধারণ করুন
+        video_upload_dir = os.path.join(UPLOAD_DIR, video_id)   # যেমন: uploads/uuid
+        video_hls_dir = os.path.join(HLS_DIR, video_id)         # যেমন: static/hls/uuid
+        save_path = os.path.join(video_upload_dir, f"{SOURCE_VIDEO_BASENAME}.{file_ext}") # সেভ করার পাথ
+        lock_file_path = os.path.join(video_hls_dir, PROCESSING_LOCK_FILENAME) # লক ফাইলের পাথ
 
         try:
-            # Create necessary directories for this video
+            # প্রয়োজনীয় ডিরেক্টরি তৈরি করুন
             ensure_dir(video_upload_dir)
-            ensure_dir(video_hls_dir) # HLS dir needed for lock file
+            ensure_dir(video_hls_dir) # লক ফাইলের জন্য HLS ডিরেক্টরিও দরকার
 
-            # Check if already processing this (unlikely with UUIDs, but good practice)
+            # যদি এই আইডির জন্য ইতিমধ্যে প্রসেসিং চলে (খুব বিরল UUID এর ক্ষেত্রে, কিন্তু ভালো অভ্যাস)
             if os.path.exists(lock_file_path):
                 flash(f"ভিডিও আইডি {video_id} ইতিমধ্যে প্রসেস করা হচ্ছে।")
-                logging.warning(f"[{video_id}] Upload attempt while lock file exists.")
-                return redirect(url_for('video_status', video_id=video_id)) # Redirect to status
+                logging.warning(f"[{video_id}] লক ফাইল থাকা অবস্থায় আপলোডের চেষ্টা।")
+                return redirect(url_for('video_status', video_id=video_id)) # স্ট্যাটাস পেজে পাঠান
 
-            # Save the uploaded file
+            # আপলোড করা ফাইল সেভ করুন
             file.save(save_path)
-            logging.info(f"[{video_id}] File saved to {save_path}")
+            logging.info(f"[{video_id}] ফাইল সেভ করা হয়েছে: {save_path}")
 
-            # Create the lock file *before* starting the thread
+            # থ্রেড শুরু করার *আগে* লক ফাইল তৈরি করুন
             with open(lock_file_path, 'w') as f:
                 f.write(f'Processing started at: {time.strftime("%Y-%m-%d %H:%M:%S")} for {original_filename}')
-            logging.info(f"[{video_id}] Created processing lock file: {lock_file_path}")
+            logging.info(f"[{video_id}] প্রসেসিং লক ফাইল তৈরি হয়েছে: {lock_file_path}")
 
-            # Start the transcoding process in a background thread
-            logging.info(f"[{video_id}] Starting background processing thread...")
+            # ব্যাকগ্রাউন্ড থ্রেডে ট্রান্সকোডিং প্রসেস শুরু করুন
+            logging.info(f"[{video_id}] ব্যাকগ্রাউন্ড প্রসেসিং থ্রেড শুরু হচ্ছে...")
             processing_thread = threading.Thread(
-                target=run_processing_job,
-                args=(video_id, save_path, video_hls_dir), # Pass ID and paths
-                name=f"ProcessingThread-{video_id}",
-                daemon=True
+                target=run_processing_job, # যে ফাংশনটি চলবে
+                args=(video_id, save_path, video_hls_dir), # ফাংশনের আর্গুমেন্ট
+                name=f"ProcessingThread-{video_id}", # থ্রেডের নাম
+                daemon=True # অ্যাপ বন্ধ হলে থ্রেডও বন্ধ হবে
             )
-            processing_thread.start()
+            processing_thread.start() # থ্রেড শুরু করুন
 
+            # ব্যবহারকারীকে মেসেজ দেখান এবং স্ট্যাটাস পেজে রিডাইরেক্ট করুন
             flash(f'"{original_filename}" আপলোড সফল! আইডি: {video_id}. ভিডিওটি এখন প্রসেস হচ্ছে।')
-            # Redirect to the specific video's status page
             return redirect(url_for('video_status', video_id=video_id))
 
         except Exception as e:
+            # যদি ফাইল সেভ বা থ্রেড শুরু করতে কোনো ত্রুটি হয়
             flash(f'ফাইল সেভ বা প্রসেসিং শুরু করতে ত্রুটি: {e}')
-            logging.error(f"[{video_id or 'UNKNOWN'}] Error during upload handling: {e}", exc_info=True)
-            # Clean up lock file if it was created
+            logging.error(f"[{video_id or 'UNKNOWN'}] আপলোড হ্যান্ডলিংয়ের সময় ত্রুটি: {e}", exc_info=True)
+            # ত্রুটি ঘটলে তৈরি হওয়া ফাইল/ডিরেক্টরি পরিষ্কার করার চেষ্টা করুন
             if 'lock_file_path' in locals() and os.path.exists(lock_file_path):
                 try: os.remove(lock_file_path)
                 except OSError: pass
-            # Clean up HLS dir if created
             if 'video_hls_dir' in locals() and os.path.exists(video_hls_dir):
                  try: shutil.rmtree(video_hls_dir)
                  except OSError: pass
-            # Clean up upload dir if created
             if 'video_upload_dir' in locals() and os.path.exists(video_upload_dir):
                  try: shutil.rmtree(video_upload_dir)
                  except OSError: pass
-            return redirect(url_for('index'))
+            return redirect(url_for('index')) # ইনডেক্স পেজে ফেরত পাঠান
 
     else:
+        # যদি ফাইলের এক্সটেনশন অনুমোদিত না হয়
         flash('অবৈধ ফাইলের প্রকার। অনুমোদিত প্রকারগুলি: ' + ', '.join(ALLOWED_EXTENSIONS))
         return redirect(url_for('index'))
 
 
 @app.route('/video/<video_id>')
 def video_status(video_id):
-    """Displays status (processing, ready, error) or player for a specific video ID."""
-    logging.info(f"[{video_id}] Status check request received.")
-    video_hls_dir = os.path.join(HLS_DIR, video_id)
+    """নির্দিষ্ট ভিডিও আইডির স্ট্যাটাস (প্রসেসিং, রেডি, এরর) বা প্লেয়ার দেখায়।"""
+    logging.info(f"[{video_id}] স্ট্যাটাস চেকের অনুরোধ এসেছে।")
+    video_hls_dir = os.path.join(HLS_DIR, video_id) # এই ভিডিওর HLS ডিরেক্টরি
 
-    # Define paths for state files within the video's HLS directory
+    # এই ভিডিওর স্টেট ফাইলগুলোর পাথ
     lock_file_path = os.path.join(video_hls_dir, PROCESSING_LOCK_FILENAME)
     ready_file_path = os.path.join(video_hls_dir, HLS_READY_FILENAME)
     error_file_path = os.path.join(video_hls_dir, PROCESSING_ERROR_FILENAME)
 
-    status = 'not_found' # Default status
-    error_message = None
-    hls_ready = False
-    processing = False
+    status = 'not_found' # ডিফল্ট স্ট্যাটাস
+    error_message = None # ত্রুটির বার্তা
+    hls_ready = False    # HLS রেডি কিনা
+    processing = False   # প্রসেসিং চলছে কিনা
 
+    # ভিডিওর ডিরেক্টরি আছে কিনা তা পরীক্ষা করুন
     if not os.path.isdir(video_hls_dir) and not os.path.isdir(os.path.join(UPLOAD_DIR, video_id)):
-         logging.warning(f"[{video_id}] HLS and Upload directory not found.")
-         # Consider flashing a message here? Or just render 'not_found' status.
-         # abort(404) might be too harsh if it was just deleted.
-         pass # Will render with status 'not_found'
+         logging.warning(f"[{video_id}] HLS এবং আপলোড ডিরেক্টরি খুঁজে পাওয়া যায়নি।")
+         # স্ট্যাটাস 'not_found' থাকবে
+         pass
+    # ত্রুটি ফাইল আছে কিনা পরীক্ষা করুন
     elif os.path.exists(error_file_path):
         status = 'error'
         try:
             with open(error_file_path, 'r') as f:
-                error_message = f.read()
-            logging.warning(f"[{video_id}] Found error file: {error_file_path}")
+                error_message = f.read() # ত্রুটির বার্তা পড়ুন
+            logging.warning(f"[{video_id}] ত্রুটি ফাইল পাওয়া গেছে: {error_file_path}")
         except Exception as e:
-            error_message = f"Could not read error file: {e}"
+            error_message = f"ত্রুটি ফাইল পড়তে সমস্যা: {e}"
             logging.error(f"[{video_id}] {error_message}")
+    # রেডি ফাইল আছে কিনা পরীক্ষা করুন
     elif os.path.exists(ready_file_path):
         status = 'ready'
         hls_ready = True
-        logging.info(f"[{video_id}] Found ready file: {ready_file_path}")
+        logging.info(f"[{video_id}] রেডি ফাইল পাওয়া গেছে: {ready_file_path}")
+    # লক ফাইল আছে কিনা পরীক্ষা করুন
     elif os.path.exists(lock_file_path):
         status = 'processing'
         processing = True
-        logging.info(f"[{video_id}] Found lock file: {lock_file_path}")
+        logging.info(f"[{video_id}] লক ফাইল পাওয়া গেছে: {lock_file_path}")
     else:
-         # Directories exist, but no state files found. Maybe deleted or never processed?
-         logging.warning(f"[{video_id}] No state files found in {video_hls_dir}. Assuming 'not_found' or incomplete.")
-         status = 'not_found' # Or perhaps 'unknown'?
+         # ডিরেক্টরি আছে কিন্তু কোনো স্টেট ফাইল নেই (সম্ভবত মুছে ফেলা হয়েছে বা প্রসেসিং অসম্পূর্ণ)
+         logging.warning(f"[{video_id}] কোনো স্টেট ফাইল পাওয়া যায়নি ({video_hls_dir})। স্ট্যাটাস 'not_found' ধরা হচ্ছে।")
+         status = 'not_found'
 
-
-    logging.info(f"[{video_id}] Rendering video_status.html with status: {status}")
+    # টেমপ্লেট রেন্ডার করুন এবং স্ট্যাটাস সম্পর্কিত ভেরিয়েবলগুলো পাস করুন
+    logging.info(f"[{video_id}] video_status.html রেন্ডার করা হচ্ছে স্ট্যাটাস: {status}")
     return render_template('video_status.html',
                            video_id=video_id,
                            status=status,
-                           hls_ready=hls_ready, # Explicitly pass for template logic
-                           processing=processing, # Explicitly pass for template logic
+                           hls_ready=hls_ready,
+                           processing=processing,
                            error=error_message)
 
 
 @app.route('/hls/<video_id>/<path:filename>')
 def serve_hls_files(video_id, filename):
-    """Serves HLS files for a specific video ID."""
-    video_hls_dir = os.path.join(HLS_DIR, video_id)
-    logging.debug(f"[{video_id}] Request for HLS file: {filename} from directory {video_hls_dir}")
+    """নির্দিষ্ট ভিডিও আইডির HLS ফাইল (.m3u8, .ts) সার্ভ করে।"""
+    video_hls_dir = os.path.join(HLS_DIR, video_id) # ভিডিওর HLS ডিরেক্টরি
+    logging.debug(f"[{video_id}] HLS ফাইলের অনুরোধ: {filename} ডিরেক্টরি থেকে: {video_hls_dir}")
 
-    # Basic security checks
+    # নিরাপত্তা পরীক্ষা: ডিরেক্টরি ট্র্যাভার্সাল অ্যাটাক প্রতিরোধ
     if '..' in filename or filename.startswith('/') or '..' in video_id or video_id.startswith('/'):
-        logging.warning(f"[{video_id}] Directory traversal attempt blocked for: {filename}")
+        logging.warning(f"[{video_id}] ডিরেক্টরি ট্র্যাভার্সাল প্রচেষ্টা ব্লক করা হয়েছে: {filename}")
         abort(403) # Forbidden
 
-    # Construct the full path to the requested file
+    # ফাইলের সম্পূর্ণ পাথ তৈরি করুন
     file_path = os.path.join(video_hls_dir, filename)
 
-    # Check if the directory for the video ID exists
+    # ভিডিওর HLS ডিরেক্টরি আছে কিনা তা নিশ্চিত করুন
     if not os.path.isdir(video_hls_dir):
-        logging.warning(f"[{video_id}] HLS directory not found: {video_hls_dir}")
-        abort(404)
+        logging.warning(f"[{video_id}] HLS ডিরেক্টরি খুঁজে পাওয়া যায়নি: {video_hls_dir}")
+        abort(404) # Not Found
 
-    # Use safe_join (or similar) in production Flask for better security, but basic check here:
+    # অতিরিক্ত নিরাপত্তা পরীক্ষা: নিশ্চিত করুন যে পাথটি সত্যিই HLS ডিরেক্টরির ভিতরে
     abs_hls_dir = os.path.abspath(video_hls_dir)
     abs_file_path = os.path.abspath(file_path)
     if not abs_file_path.startswith(abs_hls_dir):
-         logging.error(f"[{video_id}] Security risk: Attempt to access file outside HLS directory: {abs_file_path}")
+         logging.error(f"[{video_id}] নিরাপত্তা ঝুঁকি: HLS ডিরেক্টরির বাইরের ফাইল অ্যাক্সেসের চেষ্টা: {abs_file_path}")
          abort(403) # Forbidden
 
-    # Check if the specific file exists within that directory
+    # নির্দিষ্ট ফাইলটি ঐ ডিরেক্টরিতে আছে কিনা তা পরীক্ষা করুন
     if not os.path.isfile(file_path):
-        logging.warning(f"[{video_id}] HLS file not found: {file_path}")
-        abort(404)
+        logging.warning(f"[{video_id}] HLS ফাইল খুঁজে পাওয়া যায়নি: {file_path}")
+        abort(404) # Not Found
 
     try:
-        # Serve the file from the specific video's HLS directory
+        # ফাইলটি সার্ভ করুন (conditional=True ক্যাশিং উন্নত করে)
         return send_from_directory(video_hls_dir, filename, conditional=True)
     except FileNotFoundError:
-        # Should be caught by isfile check above, but belt-and-suspenders
-        logging.warning(f"[{video_id}] HLS file not found by send_from_directory: {file_path}")
+        # যদিও isfile চেক করা হয়েছে, এটি একটি অতিরিক্ত নিরাপত্তা স্তর
+        logging.warning(f"[{video_id}] send_from_directory দ্বারা HLS ফাইল খুঁজে পাওয়া যায়নি: {file_path}")
         abort(404)
     except Exception as e:
-        logging.error(f"[{video_id}] Error serving HLS file {filename}: {e}", exc_info=True)
+        # ফাইল সার্ভ করার সময় অন্য কোনো ত্রুটি ঘটলে
+        logging.error(f"[{video_id}] HLS ফাইল সার্ভ করতে ত্রুটি ({filename}): {e}", exc_info=True)
         abort(500) # Internal Server Error
 
 
 # === Application Startup ===
-# Check ffmpeg on startup
-if not check_ffmpeg():
-    logging.critical("ffmpeg is required but not available. Processing will fail.")
+# অ্যাপ্লিকেশন শুরু হওয়ার সময় করণীয়
 
-# Ensure base directories exist on startup
+# প্রয়োজনীয় কমান্ডগুলো উপলব্ধ কিনা তা পরীক্ষা করুন
+logging.info("প্রয়োজনীয় কমান্ড পরীক্ষা করা হচ্ছে (ffmpeg, ffprobe)...")
+ffmpeg_ok = check_command('ffmpeg')
+ffprobe_ok = check_command('ffprobe')
+if not ffmpeg_ok:
+    logging.critical("ffmpeg প্রয়োজন কিন্তু উপলব্ধ নেই। প্রসেসিং ব্যর্থ হবে।")
+if not ffprobe_ok:
+     logging.critical("ffprobe ডাইমেনশন সনাক্তকরণের জন্য প্রয়োজন কিন্তু উপলব্ধ নেই। প্রসেসিং ব্যর্থ হতে পারে বা রেজোলিউশন ট্যাগ সঠিক নাও হতে পারে।")
+
+# অ্যাপ্লিকেশন চালু হওয়ার সময় প্রয়োজনীয় ডিরেক্টরিগুলো তৈরি করুন
+logging.info("প্রয়োজনীয় ডিরেক্টরি নিশ্চিত করা হচ্ছে...")
 ensure_dir(BASE_DIR)
 ensure_dir(UPLOAD_DIR)
 ensure_dir(STATIC_DIR)
 ensure_dir(HLS_DIR)
 
-
 # === Main Execution Block ===
+# মূল এক্সিকিউশন ব্লক
+
 if __name__ == '__main__':
-    # Set debug=False for stability
+    # অ্যাপ্লিকেশনটি চালান
+    logging.info("Flask অ্যাপ্লিকেশন শুরু হচ্ছে...")
+    # debug=False প্রোডাকশন বা স্থিতিশীলতার জন্য ভালো
+    # আপনি চাইলে ffmpeg/ffprobe না থাকলে অ্যাপ চালানো বন্ধ করতে পারেন (নিচের কমেন্ট করা কোড)
+    # if ffmpeg_ok and ffprobe_ok:
+    #      app.run(host='0.0.0.0', port=8000, debug=False)
+    # else:
+    #      logging.error("প্রয়োজনীয় নির্ভরতা (ffmpeg/ffprobe) না থাকায় অ্যাপ্লিকেশন শুরু করা যাচ্ছে না।")
+
+    # নির্ভরতা না থাকলেও অ্যাপ চালানোর অনুমতি দিন, ত্রুটি প্রসেসিংয়ের সময় দেখা যাবে
     app.run(host='0.0.0.0', port=8000, debug=False)
